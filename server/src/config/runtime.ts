@@ -277,6 +277,12 @@ export async function complianceRules(): Promise<string> {
   return valueOf<string>(meta, 'compliance.rules');
 }
 
+/** Whether the first-run setup wizard has been completed (setup.completed). */
+export async function setupCompleted(): Promise<boolean> {
+  const meta = await resolve();
+  return valueOf<boolean>(meta, 'setup.completed');
+}
+
 // ---- First-boot env seeding + introspection ------------------------------------
 
 /**

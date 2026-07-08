@@ -1,13 +1,28 @@
 import express, { type Request, type Response, type NextFunction, type RequestHandler } from 'express';
 import cookieParser from 'cookie-parser';
 import bcrypt from 'bcryptjs';
+import OpenAI from 'openai';
 import { config } from '../config';
 import { logger } from '../logger';
 import * as repo from '../db/repo';
 import { readReceiptImage } from '../storage';
 import { woo, type WcOrder } from '../integrations/woocommerce';
-import { woo as wooConfig, dispatchTemplate, invalidate as invalidateSettings } from '../config/runtime';
-import { SETTINGS_BY_KEY } from '../config/settings-schema';
+import {
+  woo as wooConfig,
+  dispatchTemplate,
+  invalidate as invalidateSettings,
+  getResolvedWithMeta,
+  envLockedKeys,
+  setupCompleted,
+} from '../config/runtime';
+import { encryptSecret } from '../config/secret';
+import { PROVIDERS, type ProviderSpec } from '../agent/llm/providers';
+import {
+  buildSettingsDto,
+  normalizeSettingsUpdates,
+  validateSettingsUpdates,
+  coerceForStorage,
+} from './settings-dto';
 import {
   orderForStaff,
   STATUS_ES,
@@ -17,17 +32,35 @@ import {
 import { SESSION_COOKIE, signSession, verifySession, type SessionUser } from './auth';
 import type { WhatsAppGateway } from '../whatsapp/socket';
 
-// Interim allowlist for PUT /api/settings until Phase 6 replaces this with a
-// typed, per-group DTO. These are the only free-text keys the current (pre-
-// wizard) config page writes; everything else — and anything secret — is
-// rejected here rather than left open to an arbitrary raw KV write.
-const SETTINGS_PUT_ALLOWED_KEYS = new Set([
-  'info.payment',
-  'info.shipping',
-  'info.general',
-  'dispatch.template',
-  'compliance.rules',
-]);
+type ChatCompletionCreateParamsNonStreaming = OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming;
+
+/** {connected, hasQr} — the one shape /health, /api/setup/status and
+ * /api/whatsapp/status all report the gateway's pairing state in. */
+function whatsappStatus(gateway: WhatsAppGateway): { connected: boolean; hasQr: boolean } {
+  return { connected: gateway.connected, hasQr: Boolean(gateway.latestQR) };
+}
+
+/** Maps an LLM provider-test failure to a message safe to show an end user —
+ * NEVER echoes err.message verbatim (which could, depending on the SDK/proxy,
+ * include request details), and never the posted API key. */
+function safeLlmTestError(err: unknown): string {
+  const status =
+    err && typeof err === 'object' && 'status' in err ? (err as { status?: unknown }).status : undefined;
+  if (status === 401 || status === 403) return 'Invalid API key or insufficient permissions.';
+  if (status === 404) return 'Model not found for this provider.';
+  if (status === 429) return 'Rate limited by the provider — try again shortly.';
+  if (typeof status === 'number' && status >= 500) return 'The provider API is currently unavailable.';
+  if (err instanceof Error && /timeout/i.test(err.message)) return 'Request timed out.';
+  return 'Could not connect to the LLM provider with these credentials.';
+}
+
+/** Maps a WooCommerce credential-test HTTP status to a safe user-facing message. */
+function safeWooTestError(status: number): string {
+  if (status === 401 || status === 403) return 'Invalid consumer key/secret, or REST API access is disabled.';
+  if (status === 404) return 'WooCommerce REST API not found at this URL — check the store URL.';
+  if (status >= 500) return 'The store is currently unavailable.';
+  return `The store rejected the request (HTTP ${status}).`;
+}
 
 // Constant-time-ish dummy compare target so unknown emails take ~the same time
 // as real ones (prevents login timing-based email enumeration).
@@ -73,12 +106,75 @@ export function createApiServer(deps: { gateway: WhatsAppGateway }) {
   app.use(express.json({ limit: '1mb' }));
   app.use(cookieParser());
 
-  // ---- health / QR (no auth) ----
+  // ---- health (no auth) ----
+  // ALWAYS 200: liveness (the process/API is up) is a different question from
+  // pairing (WhatsApp connected). Docker's healthcheck (depends_on:
+  // service_healthy) must pass BEFORE the first WhatsApp pairing, or the
+  // wizard flow deadlocks on first boot — see docker-compose.yml.
   app.get('/health', (_req, res) => {
-    res
-      .status(deps.gateway.connected ? 200 : 503)
-      .json({ connected: deps.gateway.connected, awaitingQr: Boolean(deps.gateway.latestQR) });
+    res.status(200).json({ status: 'ok', whatsapp: whatsappStatus(deps.gateway) });
   });
+
+  // ---- setup wizard: status + one-shot admin bootstrap (no auth) ----
+  app.get(
+    '/api/setup/status',
+    ah(async (_req, res) => {
+      const [staffCount, completed] = await Promise.all([repo.countStaff(), setupCompleted()]);
+      res.json({
+        needsSetup: staffCount === 0,
+        setupCompleted: completed,
+        whatsapp: whatsappStatus(deps.gateway),
+      });
+    }),
+  );
+
+  app.post(
+    '/api/setup/admin',
+    ah(async (req, res) => {
+      // Shares the login-throttle map/window/threshold below (defined further
+      // down but hoisted as a function declaration) under a fixed key: this
+      // endpoint is only ever meaningfully called once per deployment, so
+      // there's no "existing account" to key by — any repeated
+      // failed/rejected attempt is equally suspicious regardless of the
+      // posted email.
+      const throttleKey = 'setup-admin';
+      if (loginThrottled(throttleKey)) {
+        res.status(429).json({ error: 'Too many attempts. Try again in a few minutes.' });
+        return;
+      }
+      const name = String(req.body?.name ?? '').trim() || null;
+      const email = String(req.body?.email ?? '').trim().toLowerCase();
+      const password = String(req.body?.password ?? '');
+      if (!EMAIL_RE.test(email)) {
+        recordLoginFail(throttleKey);
+        res.status(400).json({ error: 'Invalid email address' });
+        return;
+      }
+      if (password.length < MIN_PASSWORD_LEN) {
+        recordLoginFail(throttleKey);
+        res.status(400).json({ error: `Password must be at least ${MIN_PASSWORD_LEN} characters` });
+        return;
+      }
+      const hash = await bcrypt.hash(password, 10);
+      const staff = await repo.createFirstAdmin(email, hash, name);
+      if (!staff) {
+        recordLoginFail(throttleKey);
+        res.status(409).json({ error: 'Setup has already been completed' });
+        return;
+      }
+      loginFails.delete(throttleKey);
+      const token = await signSession(staff);
+      res.cookie(SESSION_COOKIE, token, {
+        httpOnly: true,
+        sameSite: 'lax',
+        secure: config.COOKIE_SECURE,
+        path: '/',
+        maxAge: 7 * 24 * 3600 * 1000,
+      });
+      res.json({ id: staff.id, email: staff.email, name: staff.name });
+    }),
+  );
+
   // ---- auth ----
   app.post(
     '/api/auth/login',
@@ -144,6 +240,124 @@ export function createApiServer(deps: { gateway: WhatsAppGateway }) {
       .type('text/plain; charset=utf-8')
       .send(deps.gateway.latestQR ?? (deps.gateway.connected ? 'connected' : 'no QR yet — check logs'));
   });
+
+  // ---- setup wizard: test posted (unsaved) credentials ----
+  app.post(
+    '/api/setup/test/llm',
+    requireAuth,
+    ah(async (req, res) => {
+      const providerId = String(req.body?.provider ?? '');
+      const provider = (PROVIDERS as Record<string, ProviderSpec>)[providerId];
+      if (!provider) {
+        res.status(400).json({ ok: false, error: 'Unknown provider' });
+        return;
+      }
+      const apiKey = String(req.body?.apiKey ?? '');
+      if (!apiKey.trim()) {
+        res.status(400).json({ ok: false, error: 'Missing API key' });
+        return;
+      }
+      const model = String(req.body?.model ?? '').trim() || provider.defaultModel;
+      const baseUrl = String(req.body?.baseUrl ?? '').trim() || provider.baseURL;
+
+      // Throwaway client built directly from the posted (unsaved) values —
+      // deliberately NOT getLlm(): that only ever reads persisted runtime
+      // config, and this is testing credentials before any write happens.
+      const client = new OpenAI({ apiKey, baseURL: baseUrl, maxRetries: 0, timeout: 15_000 });
+      const body: ChatCompletionCreateParamsNonStreaming & Record<string, unknown> = {
+        model,
+        messages: [{ role: 'user', content: 'ping' }],
+        max_tokens: 1,
+      };
+      provider.prepareBody(body, { reasoningSplit: false, thinkingDisabled: false });
+
+      try {
+        await client.chat.completions.create(body);
+        res.json({ ok: true, model, vision: provider.supportsVision(model) });
+      } catch (err) {
+        logger.warn({ err, provider: providerId }, 'setup: LLM credential test failed');
+        res.json({ ok: false, error: safeLlmTestError(err), model, vision: provider.supportsVision(model) });
+      }
+    }),
+  );
+
+  app.post(
+    '/api/setup/test/woocommerce',
+    requireAuth,
+    ah(async (req, res) => {
+      const rawUrl = String(req.body?.url ?? '').trim().replace(/\/$/, '');
+      const consumerKey = String(req.body?.consumerKey ?? '').trim();
+      const consumerSecret = String(req.body?.consumerSecret ?? '').trim();
+      if (!rawUrl || !consumerKey || !consumerSecret) {
+        res.status(400).json({ ok: false, error: 'Missing url, consumerKey or consumerSecret' });
+        return;
+      }
+      let base: URL;
+      try {
+        base = new URL(rawUrl);
+      } catch {
+        res.status(400).json({ ok: false, error: 'Invalid store URL' });
+        return;
+      }
+
+      const auth = 'Basic ' + Buffer.from(`${consumerKey}:${consumerSecret}`).toString('base64');
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 15_000);
+      try {
+        const target = new URL('/wp-json/wc/v3/products', base);
+        target.searchParams.set('per_page', '1');
+        const resp = await fetch(target, {
+          headers: { Authorization: auth, Accept: 'application/json' },
+          signal: controller.signal,
+        });
+        if (!resp.ok) {
+          res.json({ ok: false, error: safeWooTestError(resp.status) });
+          return;
+        }
+        const data = (await resp.json()) as Array<{ name?: string }>;
+        res.json({ ok: true, sampleProductName: data[0]?.name ?? null });
+      } catch (err) {
+        const timedOut = err instanceof Error && err.name === 'AbortError';
+        logger.warn({ err }, 'setup: WooCommerce credential test failed');
+        res.json({
+          ok: false,
+          error: timedOut ? 'Request timed out.' : 'Could not connect to the WooCommerce store with these credentials.',
+        });
+      } finally {
+        clearTimeout(timer);
+      }
+    }),
+  );
+
+  // ---- WhatsApp pairing status + manual restart (auth) ----
+  app.get('/api/whatsapp/status', requireAuth, (_req, res) => {
+    res.json(whatsappStatus(deps.gateway));
+  });
+
+  app.post(
+    '/api/whatsapp/restart',
+    requireAuth,
+    ah(async (req, res) => {
+      const force = req.body?.force === true;
+      if (deps.gateway.connected && !force) {
+        res.status(409).json({ error: 'already_connected' });
+        return;
+      }
+      await deps.gateway.restart();
+      res.json({ ok: true, whatsapp: whatsappStatus(deps.gateway) });
+    }),
+  );
+
+  // ---- setup wizard: mark complete ----
+  app.post(
+    '/api/setup/complete',
+    requireAuth,
+    ah(async (_req, res) => {
+      await repo.upsertSetting('setup.completed', 'true');
+      invalidateSettings();
+      res.json({ ok: true });
+    }),
+  );
 
   app.get(
     '/api/conversations',
@@ -240,43 +454,48 @@ export function createApiServer(deps: { gateway: WhatsAppGateway }) {
     }),
   );
 
-  // ---- store settings (payment methods, shipping, …) ----
-  // Interim: dumps the raw KV row map, minus anything marked `secret` in the
-  // settings schema (never send even the encrypted blob to the browser).
-  // Phase 6 replaces this with a grouped, sanitized DTO ({value, source, readOnly}).
+  // ---- settings: grouped, sanitized DTO (secrets NEVER sent in plaintext) ----
   app.get(
     '/api/settings',
     requireAuth,
     ah(async (_req, res) => {
-      const raw = await repo.getSettings();
-      const sanitized: Record<string, string> = {};
-      for (const [key, value] of Object.entries(raw)) {
-        if (SETTINGS_BY_KEY.get(key)?.secret) continue;
-        sanitized[key] = value;
-      }
-      res.json(sanitized);
+      const meta = await getResolvedWithMeta();
+      res.json(buildSettingsDto(meta));
     }),
   );
   app.put(
     '/api/settings',
     requireAuth,
     ah(async (req, res) => {
-      const key = String(req.body?.key ?? '').trim();
-      const value = String(req.body?.value ?? '');
-      if (!key) {
-        res.status(400).json({ error: 'Falta "key"' });
+      // Accepts both the new batch shape ({ updates: [...] }) and the legacy
+      // single shape ({ key, value }) — the pre-Phase-7 dashboard config page
+      // still sends the latter.
+      const inputs = normalizeSettingsUpdates(req.body);
+      if (inputs.length === 0) {
+        res.status(400).json({ error: 'No updates provided' });
         return;
       }
-      if (SETTINGS_BY_KEY.get(key)?.secret) {
-        res.status(400).json({ error: 'No se puede escribir un valor secreto por esta vía' });
+      const validated = validateSettingsUpdates(inputs, new Set(envLockedKeys()));
+      if (!validated.ok) {
+        res.status(400).json({
+          error: 'Unknown or read-only (env-locked) settings keys',
+          keys: validated.offenders,
+        });
         return;
       }
-      if (!SETTINGS_PUT_ALLOWED_KEYS.has(key)) {
-        res.status(400).json({ error: `Clave de configuración desconocida o restringida: ${key}` });
-        return;
+      try {
+        await Promise.all(
+          validated.updates.map(({ entry, raw }) => {
+            const stored = coerceForStorage(entry, raw);
+            return repo.upsertSetting(entry.key, entry.secret ? encryptSecret(stored) : stored);
+          }),
+        );
+      } finally {
+        // Always invalidate, even on partial failure: Promise.all doesn't
+        // cancel the writes that already started, so the cache must never
+        // stay stale relative to whatever did land.
+        invalidateSettings();
       }
-      await repo.upsertSetting(key, value);
-      invalidateSettings(); // lazy clients/getters must see this on the next read
       res.json({ ok: true });
     }),
   );

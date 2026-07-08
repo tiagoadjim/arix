@@ -1,4 +1,4 @@
-import { many, one } from './pool';
+import { many, one, pool } from './pool';
 import { config } from '../config';
 import { logger } from '../logger';
 import type {
@@ -301,6 +301,50 @@ export async function createStaff(email: string, passwordHash: string, name: str
 
 export async function listStaff(): Promise<StaffSummary[]> {
   return many<StaffSummary>('select id, email, name, created_at from staff order by created_at asc');
+}
+
+/**
+ * One-shot bootstrap for the setup wizard: create the very first admin, but
+ * ONLY if the staff table is still empty — returns null (never throws) when
+ * it isn't, so the caller (POST /api/setup/admin) can answer 409 either way,
+ * whether staff already existed or a concurrent request won the race.
+ *
+ * Race safety: wrapped in a SERIALIZABLE transaction around a plain
+ * check-then-insert. Postgres's default READ COMMITTED isolation would let
+ * two concurrent "table is empty" checks both succeed before either commits
+ * (an INSERT ... WHERE NOT EXISTS alone does not prevent this — it only
+ * guards against re-reading the SAME already-committed row). SERIALIZABLE
+ * makes Postgres abort one of the two transactions with a 40001
+ * serialization_failure instead, which we treat exactly like "staff already
+ * exists" rather than a 500.
+ */
+export async function createFirstAdmin(
+  email: string,
+  passwordHash: string,
+  name: string | null,
+): Promise<Staff | null> {
+  const client = await pool.connect();
+  try {
+    await client.query('begin isolation level serializable');
+    const { rows: existing } = await client.query('select 1 from staff limit 1');
+    if (existing.length > 0) {
+      await client.query('rollback');
+      return null;
+    }
+    const { rows } = await client.query<Staff>(
+      `insert into staff (email, password_hash, name) values ($1, $2, $3)
+       returning id, email, password_hash, name`,
+      [email, passwordHash, name],
+    );
+    await client.query('commit');
+    return rows[0] ?? null;
+  } catch (err) {
+    await client.query('rollback').catch(() => {});
+    if ((err as { code?: string } | null)?.code === '40001') return null; // lost the race
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 export async function countStaff(): Promise<number> {

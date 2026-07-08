@@ -131,16 +131,6 @@ export const api = {
   orders: (id: string) => jget<{ orders: StaffOrder[] }>(`/api/conversations/${id}/orders`),
   mediaUrl: (path: string) => `/api/media/${path.split('/').map(encodeURIComponent).join('/')}`,
 
-  // ---- settings: legacy single-value shape — kept only for the pre-7B
-  // config page (`(panel)/config/page.tsx`); superseded by settingsGrouped()/
-  // saveSettings() below. NOTE: since Fase 6, GET /api/settings actually
-  // returns the grouped SettingDto[] shape (buildSettingsDto()), so the
-  // config page's initial hydration is a known, accepted gap until 7B
-  // migrates it to the Tabs-based settings screen — saving still works via
-  // the server's legacy-shape fallback in normalizeSettingsUpdates().
-  settings: () => jget<Record<string, string>>('/api/settings'),
-  saveSetting: (key: string, value: string) => jput<{ ok: boolean }>('/api/settings', { key, value }),
-
   // ---- setup wizard ----
   setupStatus: () => jget<SetupStatus>('/api/setup/status'),
   setupAdmin: (body: { name: string; email: string; password: string }) =>

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { BellIcon, BellOffIcon, BotIcon, LogOutIcon, RefreshCwIcon, SettingsIcon, UserIcon, UsersIcon } from 'lucide-react';
+import { BellIcon, BellOffIcon, BotIcon, LogOutIcon, RefreshCwIcon, SettingsIcon, UserIcon } from 'lucide-react';
 import { api } from '@/lib/api';
 import type { Conversation } from '@/lib/types';
 import { initAudioUnlock, isMuted, playHumanWaiting, playNewMessage, setMuted } from '@/lib/sounds';
@@ -206,12 +206,6 @@ export function InboxList() {
       </div>
 
       <div className="flex items-center justify-between gap-1 border-t border-border p-2">
-        <Button variant="ghost" size="sm" className="gap-1.5" asChild>
-          <Link href="/agentes">
-            <UsersIcon className="size-4" />
-            {t.sidebar.agentsNav}
-          </Link>
-        </Button>
         <Button variant="ghost" size="sm" className="gap-1.5" asChild>
           <Link href="/config">
             <SettingsIcon className="size-4" />

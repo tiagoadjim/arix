@@ -1,17 +1,18 @@
 /**
- * Deterministic store / delivery-hours logic for Nico.
+ * Deterministic store / delivery-hours logic for the agent.
  *
  * The LLM is bad at time math and was promising same-day deliveries at night,
- * so we compute — in code — whether Vapenic can still deliver RIGHT NOW and, if
- * not, when the next delivery window opens. That fact is injected into Nico's
- * system prompt (see ./prompt.ts) so it can never promise a delivery it can't
+ * so we compute — in code — whether the store can still deliver RIGHT NOW and, if
+ * not, when the next delivery window opens. That fact is injected into the agent's
+ * system prompt (see ./prompt) so it can never promise a delivery it can't
  * make.
  *
  * SOURCE OF TRUTH for the cutoffs: edit DELIVERY_SCHEDULE below. If you change
- * it, also update the human-readable `envios` text in BOTH places so what Nico
- * *says* matches what it *enforces*: the seed default in server/src/db/schema.sql
- * AND the live `settings.envios` row (editable from the dashboard → Configuración;
- * the seed does not overwrite an existing row).
+ * it, also update the human-readable `envios` text in BOTH places so what the agent
+ * *says* matches what it *enforces*: the seed default in
+ * server/src/db/migrations/0001_init.sql AND the live `settings.envios` row
+ * (editable from the dashboard → Configuración; the seed does not overwrite an
+ * existing row).
  */
 
 export const AR_TZ = 'America/Argentina/Buenos_Aires';
@@ -97,7 +98,7 @@ export function argentinaNow(now: Date): ArNow {
 export interface StoreStatus {
   /** Human label of "now", e.g. "lunes 30/06 19:30". */
   nowLabel: string;
-  /** True if Vapenic can deliver same-day right now. */
+  /** True if the store can deliver same-day right now. */
   open: boolean;
   /** When the current window closes, e.g. "17:00" / "03:00" (only if open). */
   closesAt?: string;

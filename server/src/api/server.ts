@@ -17,7 +17,7 @@ import type { WhatsAppGateway } from '../whatsapp/socket';
 
 // Constant-time-ish dummy compare target so unknown emails take ~the same time
 // as real ones (prevents login timing-based email enumeration).
-const DUMMY_HASH = bcrypt.hashSync('nico-dummy-password', 10);
+const DUMMY_HASH = bcrypt.hashSync('arix-dummy-password', 10);
 
 // Simple per-email login throttle (login traffic arrives via the proxy, so IPs
 // collapse; throttling per account is the meaningful protection).
@@ -425,7 +425,7 @@ export function createApiServer(deps: { gateway: WhatsAppGateway }) {
       }
       const message = await repo.insertOutboundMessage({
         conversationId: conv.id,
-        sender: 'nico',
+        sender: 'agent',
         body,
         sendStatus,
         waMessageId: waId,

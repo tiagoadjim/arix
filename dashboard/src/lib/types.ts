@@ -25,7 +25,7 @@ export interface Message {
   conversation_id: string;
   account_id: string;
   direction: 'in' | 'out';
-  sender: 'customer' | 'nico' | 'human' | 'system';
+  sender: 'customer' | 'agent' | 'human' | 'system';
   wa_message_id: string | null;
   msg_type: string;
   body: string | null;

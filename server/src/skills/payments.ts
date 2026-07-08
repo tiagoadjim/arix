@@ -47,37 +47,37 @@ export const paymentTools: ToolSpec[] = [
     definition: {
       type: 'function',
       function: {
-        name: 'confirmar_pago',
+        name: 'confirm_payment',
         description:
-          'Valida un comprobante de transferencia contra una orden de WooCommerce y, si el monto coincide con el total, marca la orden como pagada (cambia su estado). Primero leé el monto del comprobante (la imagen que mandó el cliente) y pasalo en monto_comprobante. El servidor compara el monto de forma exacta y cambia el estado solo si coincide; NO confíes en tu propia aritmética. Usá esta tool únicamente cuando el cliente ya envió la imagen del comprobante y te dio (o confirmaste) el número de orden.',
+          "Validates a transfer receipt against a WooCommerce order and, if the amount matches the total, marks the order as paid (changes its status). First read the amount off the receipt (the image the customer sent) and pass it as receipt_amount. The server compares the amount exactly and only changes the status on a match; do NOT rely on your own arithmetic. Use this tool only once the customer has sent the receipt image and given you (or you've confirmed) the order number.",
         parameters: {
           type: 'object',
           properties: {
-            numero_orden: { type: 'string', description: 'Número de orden del cliente.' },
-            monto_comprobante: {
+            order_number: { type: 'string', description: "The customer's order number." },
+            receipt_amount: {
               type: 'number',
               description:
-                'El monto total que leíste en el comprobante de transferencia, como número, sin separador de miles y con punto decimal (ej: 15400 o 15400.50).',
+                'The total amount you read on the transfer receipt, as a number, with no thousands separator and a decimal point (e.g. 15400 or 15400.50).',
             },
             email: {
               type: 'string',
               description:
-                'Opcional. Email del cliente, para verificar identidad cuando el teléfono del chat no coincide con la orden.',
+                "Optional. The customer's email, to verify identity when the chat's phone doesn't match the order.",
             },
           },
-          required: ['numero_orden', 'monto_comprobante'],
+          required: ['order_number', 'receipt_amount'],
         },
       },
     },
     handler: async (args, ctx: ToolContext) => {
-      const numero = String(args.numero_orden ?? '').trim();
+      const orderNumber = String(args.order_number ?? '').trim();
       const email = String(args.email ?? '').trim();
-      const monto = parseAmount(args.monto_comprobante as number | string);
-      if (!numero) return { ok: false, motivo: 'falta_numero_orden' };
-      if (monto == null || monto <= 0) return { ok: false, motivo: 'monto_invalido' };
+      const receiptAmount = parseAmount(args.receipt_amount as number | string);
+      if (!orderNumber) return { ok: false, motivo: 'falta_numero_orden' };
+      if (receiptAmount == null || receiptAmount <= 0) return { ok: false, motivo: 'monto_invalido' };
 
-      const order = await woo.resolveOrderByNumber(numero);
-      if (!order) return { ok: false, motivo: 'orden_no_encontrada', numero };
+      const order = await woo.resolveOrderByNumber(orderNumber);
+      if (!order) return { ok: false, motivo: 'orden_no_encontrada', numero: orderNumber };
 
       const total = parseAmount(order.total);
       const mediaUrl = ctx.lastImage?.mediaUrl ?? null;
@@ -90,7 +90,7 @@ export const paymentTools: ToolSpec[] = [
           orderNumber: order.number,
           wooOrderId: order.id,
           mediaUrl,
-          extractedAmount: monto,
+          extractedAmount: receiptAmount,
           wooTotal: total,
           currency: order.currency,
           matchStatus,
@@ -147,15 +147,15 @@ export const paymentTools: ToolSpec[] = [
         return { ok: false, motivo: 'no_se_pudo_leer_total_orden' };
       }
 
-      if (!amountsMatch(total, monto, config.PAYMENT_AMOUNT_TOLERANCE)) {
-        await record('mismatch', `Monto comprobante ${monto} ≠ total ${total}.`);
+      if (!amountsMatch(total, receiptAmount, config.PAYMENT_AMOUNT_TOLERANCE)) {
+        await record('mismatch', `Monto comprobante ${receiptAmount} ≠ total ${total}.`);
         return {
           ok: false,
           motivo: 'monto_no_coincide',
           total: order.total,
           moneda: order.currency,
-          monto_comprobante: monto,
-          diferencia: Math.round((monto - total) * 100) / 100,
+          receipt_amount: receiptAmount,
+          diferencia: Math.round((receiptAmount - total) * 100) / 100,
         };
       }
 
@@ -171,7 +171,7 @@ export const paymentTools: ToolSpec[] = [
           estado_texto: STATUS_ES[updated.status] ?? updated.status,
           total: order.total,
           moneda: order.currency,
-          monto_comprobante: monto,
+          receipt_amount: receiptAmount,
           identidad_verificada: true,
         };
       } catch (err) {

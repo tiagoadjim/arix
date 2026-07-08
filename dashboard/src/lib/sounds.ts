@@ -8,7 +8,7 @@
 
 let ctx: AudioContext | null = null;
 
-const MUTE_KEY = 'nico_sound_muted';
+const MUTE_KEY = 'arix_sound_muted';
 
 type Win = Window & { webkitAudioContext?: typeof AudioContext };
 

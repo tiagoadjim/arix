@@ -6,7 +6,7 @@ import type { Conversation as Conv, Message, Receipt, StaffOrder } from '@/lib/t
 
 const SENDER_LABEL: Record<string, string> = {
   customer: 'Cliente',
-  nico: 'Nico',
+  agent: 'Agente',
   human: 'Vos',
   system: 'Sistema',
 };
@@ -181,10 +181,10 @@ export function Conversation({ conversationId }: { conversationId: string }) {
           </div>
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <span className={`badge ${conv.mode}`}>{isHuman ? '👤 Atiende humano' : '🤖 Atiende Nico'}</span>
+          <span className={`badge ${conv.mode}`}>{isHuman ? '👤 Atiende humano' : '🤖 Atiende Arix'}</span>
           {isHuman ? (
             <button className="btn secondary" onClick={() => setMode('bot')}>
-              Devolver a Nico
+              Devolver a Arix
             </button>
           ) : (
             <button className="btn" onClick={() => setMode('human')}>
@@ -358,8 +358,8 @@ export function Conversation({ conversationId }: { conversationId: string }) {
         </div>
       ) : (
         <div className="hint">
-          Nico está atendiendo este chat automáticamente. Tocá <b>Tomar chat</b> para responder vos
-          (se pausan las respuestas de Nico).
+          Arix está atendiendo este chat automáticamente. Tocá <b>Tomar chat</b> para responder vos
+          (se pausan las respuestas de Arix).
         </div>
       )}
     </>

@@ -8,32 +8,32 @@ export const handoffTools: ToolSpec[] = [
     definition: {
       type: 'function',
       function: {
-        name: 'derivar_a_humano',
+        name: 'handoff_to_human',
         description:
-          'Deriva la conversación a un agente humano y pausa tus respuestas automáticas. Usalo SOLO cuando: (1) el cliente pide explícitamente hablar con una persona, o (2) la consulta o acción está fuera de tu alcance (no podés resolverla con tus tools). Después de llamar esta tool, avisale al cliente con calidez que en un momento lo atiende una persona del equipo.',
+          'Hands the conversation off to a human teammate and pauses your automatic replies. Use it ONLY when: (1) the customer explicitly asks to talk to a person, or (2) the request is out of your scope (you can\'t resolve it with your tools). After calling this tool, warmly let the customer know a teammate will be with them shortly.',
         parameters: {
           type: 'object',
           properties: {
-            motivo: {
+            reason: {
               type: 'string',
               description:
-                'Motivo breve de la derivación (ej: "el cliente pidió hablar con una persona", "consulta fuera de alcance: reclamo de envío").',
+                'Brief reason for the handoff (e.g. "customer asked to speak with a person", "out of scope: shipping complaint").',
             },
           },
-          required: ['motivo'],
+          required: ['reason'],
         },
       },
     },
     handler: async (args, ctx: ToolContext) => {
-      const motivo = String(args.motivo ?? '').trim() || 'sin motivo especificado';
-      await setConversationMode(ctx.conversationId, 'human', { escalationReason: motivo });
+      const reason = String(args.reason ?? '').trim() || 'sin motivo especificado';
+      await setConversationMode(ctx.conversationId, 'human', { escalationReason: reason });
       await insertOutboundMessage({
         conversationId: ctx.conversationId,
         sender: 'system',
-        body: `🙋 Derivado a un humano. Motivo: ${motivo}`,
+        body: `🙋 Derivado a un humano. Motivo: ${reason}`,
         sendStatus: 'sent', // internal note, not sent to WhatsApp
       });
-      logger.info({ conversationId: ctx.conversationId, motivo }, 'escalated to human');
+      logger.info({ conversationId: ctx.conversationId, reason }, 'escalated to human');
       return { ok: true, derivado: true };
     },
   },

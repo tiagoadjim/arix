@@ -20,7 +20,7 @@ async function main(): Promise<void> {
   );
 
   await gateway.start();
-  logger.info(`🤖 ${config.NICO_NAME} (server) iniciado para ${config.NICO_BUSINESS}`);
+  logger.info('arix server started');
 
   const shutdown = (sig: string) => {
     logger.info({ sig }, 'shutting down');

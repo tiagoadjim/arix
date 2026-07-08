@@ -14,7 +14,7 @@ import {
   insertOutboundMessage,
   touchConversation,
 } from '../db/repo';
-import { runNico } from '../agent/nico';
+import { runAgent } from '../agent/agent';
 import type { WhatsAppGateway } from '../whatsapp/socket';
 import type { Message, MessageType, ToolContext } from '../types';
 
@@ -45,7 +45,7 @@ const IMAGE_TTL_MS = 15 * 60 * 1000;
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-// Store settings (payment/shipping info) injected into Nico's prompt. Cached
+// Store settings (payment/shipping info) injected into the agent's prompt. Cached
 // briefly so we don't query on every turn; survives transient DB errors.
 let settingsCache: { at: number; data: Record<string, string> } | null = null;
 async function loadSettings(): Promise<Record<string, string>> {
@@ -61,8 +61,8 @@ async function loadSettings(): Promise<Record<string, string>> {
 }
 
 /**
- * Split Nico's reply into separate WhatsApp bubbles. Nico separates bubbles with
- * a line containing only `---`. Overflow beyond `max` is merged into the last.
+ * Split the agent's reply into separate WhatsApp bubbles. The agent separates bubbles
+ * with a line containing only `---`. Overflow beyond `max` is merged into the last.
  */
 export function splitBubbles(text: string, max: number): string[] {
   const parts = text
@@ -173,7 +173,7 @@ export class MessageRouter {
     const text = extractText(content).trim();
     const waMessageId = msg.key.id ?? null;
 
-    // Receipts often arrive as a PDF document — rasterize page 1 so Nico can read it.
+    // Receipts often arrive as a PDF document — rasterize page 1 so the agent can read it.
     const docMime = content.documentMessage?.mimetype ?? '';
     const docName = content.documentMessage?.fileName ?? '';
     const isPdf = type === 'document' && (/pdf/i.test(docMime) || /\.pdf$/i.test(docName));
@@ -184,7 +184,7 @@ export class MessageRouter {
     const phone = await jidToPhone(jid, sock);
     const name = msg.pushName ?? null;
 
-    // Download + store a receipt (image or PDF→PNG) so Nico can read it and the dashboard can show it.
+    // Download + store a receipt (image or PDF→PNG) so the agent can read it and the dashboard can show it.
     let mediaUrl: string | null = null;
     let mediaMime: string | null = null;
     let lastImage: LastImage | null = null;
@@ -222,7 +222,7 @@ export class MessageRouter {
       waMessageId,
       msgType: type,
       // Keep body null for any non-text media so the model's placeholder
-      // (in nico.ts) is the single source of truth for what it "reads".
+      // (in agent/guardrails) is the single source of truth for what it "reads".
       body: text || (type === 'text' ? '' : null),
       mediaUrl,
       mediaMime,
@@ -243,12 +243,12 @@ export class MessageRouter {
     // Human has taken over → just record; the dashboard handles the reply.
     if (conv.mode === 'human') return;
 
-    // Debounce rapid-fire messages, then let Nico answer with full context.
+    // Debounce rapid-fire messages, then let the agent answer with full context.
     if (st.timer) clearTimeout(st.timer);
     st.timer = setTimeout(() => {
       st.timer = null;
       void this.flush(conv.id);
-    }, config.NICO_DEBOUNCE_MS);
+    }, config.AGENT_DEBOUNCE_MS);
   }
 
   private async flush(conversationId: string): Promise<void> {
@@ -298,21 +298,21 @@ export class MessageRouter {
 
       await this.gateway.indicateTyping(conv.wa_jid);
       const settings = await loadSettings();
-      const reply = await runNico(ctx, history, settings);
+      const reply = await runAgent(ctx, history, settings);
 
-      // A human may have taken over while Nico was thinking — don't talk over them.
+      // A human may have taken over while the agent was thinking — don't talk over them.
       const after = await getConversation(conversationId);
       if (after?.mode === 'human') return;
 
       // Send as up to N separate bubbles (feels more human than one long block).
-      const bubbles = splitBubbles(reply, config.NICO_MAX_BUBBLES);
+      const bubbles = splitBubbles(reply, config.AGENT_MAX_BUBBLES);
       for (const [i, bubble] of bubbles.entries()) {
         if (i > 0) await delay(600 + Math.min(1400, bubble.length * 20));
         await this.gateway.indicateTyping(conv.wa_jid, 700);
         const waId = await this.gateway.sendText(conv.wa_jid, bubble);
         await insertOutboundMessage({
           conversationId,
-          sender: 'nico',
+          sender: 'agent',
           body: bubble,
           sendStatus: 'sent',
           waMessageId: waId,

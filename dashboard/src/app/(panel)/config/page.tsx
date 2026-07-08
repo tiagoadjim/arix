@@ -4,9 +4,9 @@ import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 
 const SECTIONS = [
-  { key: 'medios_de_pago', label: 'Medios de pago', hint: 'Alias para transferir, recargos, etc. Nico responde con esto.' },
+  { key: 'medios_de_pago', label: 'Medios de pago', hint: 'Alias para transferir, recargos, etc. El agente responde con esto.' },
   { key: 'envios', label: 'Formas de envío', hint: 'Zonas, horarios y tiempos de entrega.' },
-  { key: 'info_general', label: 'Información general / FAQ', hint: 'Cualquier otra cosa que Nico deba saber.' },
+  { key: 'info_general', label: 'Información general / FAQ', hint: 'Cualquier otra cosa que el agente deba saber.' },
   {
     key: 'uber_envio_template',
     label: 'Mensaje de envío Uber Moto',
@@ -42,7 +42,7 @@ export default function ConfigPage() {
     <div className="config-page">
       <h2>Configuración</h2>
       <p style={{ color: 'var(--muted)', marginTop: -8 }}>
-        Esta info la usa Nico para responder consultas (envíos, pagos, alias, horarios…).
+        Esta info la usa el agente para responder consultas (envíos, pagos, alias, horarios…).
       </p>
       {loading && <div style={{ color: 'var(--muted)' }}>Cargando…</div>}
       {!loading &&

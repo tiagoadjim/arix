@@ -12,7 +12,7 @@ import { logger } from './logger';
 export async function pdfFirstPageToPng(pdf: Buffer): Promise<Buffer | null> {
   let dir: string | null = null;
   try {
-    dir = await mkdtemp(join(tmpdir(), 'nico-pdf-'));
+    dir = await mkdtemp(join(tmpdir(), 'arix-pdf-'));
     const pdfPath = join(dir, 'in.pdf');
     const outPrefix = join(dir, 'out');
     await writeFile(pdfPath, pdf);

@@ -29,8 +29,8 @@ export default function LoginPage() {
   return (
     <div className="login-wrap">
       <form className="login-card" onSubmit={onSubmit}>
-        <h1>Nico</h1>
-        <p>Panel de atención · Vapenic</p>
+        <h1>Arix</h1>
+        <p>Panel de atención</p>
         <label>Email</label>
         <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoFocus />
         <label>Contraseña</label>

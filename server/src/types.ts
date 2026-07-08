@@ -1,4 +1,4 @@
-// Shared domain types for the Nico server.
+// Shared domain types for the server.
 
 export type ConversationMode = 'bot' | 'human';
 
@@ -21,7 +21,7 @@ export interface Conversation {
 }
 
 export type MessageDirection = 'in' | 'out';
-export type MessageSender = 'customer' | 'nico' | 'human' | 'system';
+export type MessageSender = 'customer' | 'agent' | 'human' | 'system';
 export type MessageType =
   | 'text'
   | 'image'
@@ -68,7 +68,7 @@ export interface Receipt {
 }
 
 /**
- * Context handed to every tool when Nico calls it. Lets tools act on behalf of
+ * Context handed to every tool when the agent calls it. Lets tools act on behalf of
  * the current conversation/customer WITHOUT trusting the model to supply
  * sensitive values (e.g. the customer's phone is taken from here, not the LLM).
  */

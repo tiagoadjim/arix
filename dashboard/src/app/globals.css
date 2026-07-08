@@ -55,7 +55,7 @@ input, textarea { font: inherit; }
 .msg { max-width: 72%; padding: 8px 12px; border-radius: 12px; white-space: pre-wrap; word-break: break-word; line-height: 1.35; }
 .msg .meta { display: block; font-size: 10px; color: var(--muted); margin-top: 4px; }
 .msg.customer { align-self: flex-start; background: var(--bubble-in); }
-.msg.nico { align-self: flex-end; background: var(--bubble-bot); }
+.msg.agent { align-self: flex-end; background: var(--bubble-bot); }
 .msg.human { align-self: flex-end; background: var(--bubble-out); }
 .msg.system { align-self: center; background: transparent; color: var(--muted); font-size: 12px; font-style: italic; max-width: 90%; }
 .msg img { max-width: 220px; border-radius: 8px; margin-top: 6px; display: block; }

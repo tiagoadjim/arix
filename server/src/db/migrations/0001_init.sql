@@ -1,8 +1,18 @@
--- Nico (Vapenic) — self-hosted Postgres schema. Idempotent; run on every startup.
+-- Arix — self-hosted Postgres schema baseline.
+--
+-- This file is migration 0001: it captures the schema exactly as it existed
+-- before the versioned migration runner (see server/src/db/pool.ts) was
+-- introduced. Every statement below is idempotent (safe to re-run), matching
+-- the original single-file schema.sql this replaces.
+--
+-- IMPORTANT: do NOT edit the `messages.sender` check constraint below to add
+-- 'agent' — that rename (and the data backfill from the old 'nico' value) is
+-- handled by 0002_sender_agent.sql so existing databases migrate correctly.
+-- New migrations go in new NNNN_*.sql files; never edit an applied one.
 
 create extension if not exists pgcrypto;
 
--- Staff (dashboard login). Replaces Supabase Auth.
+-- Staff (dashboard login).
 create table if not exists staff (
   id            uuid        primary key default gen_random_uuid(),
   email         text        unique not null,
@@ -112,30 +122,23 @@ returns void language sql as $$
 $$;
 
 -- Store settings: editable info blocks (payment methods, shipping, etc.) that the
--- dashboard maintains and Nico reads to answer FAQs. Key/value text.
+-- dashboard maintains and the agent reads to answer FAQs. Key/value text.
 create table if not exists settings (
   key        text        primary key,
   value      text        not null default '',
   updated_at timestamptz not null default now()
 );
 
--- Seed defaults only if absent (editable later from the dashboard).
+-- Seed defaults only if absent (editable later from the dashboard). Values are
+-- intentionally blank/generic placeholders for a fresh, brand-neutral install —
+-- a real deployment fills these in from the dashboard.
 insert into settings (key, value) values
-  ('medios_de_pago',
-   'Medios de pago:
-- Transferencia bancaria: alias VAPENIC.HOY (sin recargo).
-- MercadoPago: tiene un recargo del 12%.'),
-  ('envios',
-   'Envíos (los hace Vapenic; los pedidos se cargan desde la web):
-- Lunes a Jueves: entregamos de 11 a 17 hs.
-- Viernes y Sábados: entregamos de 11 a 3 AM.
-- Domingos: cerrado.
-- CABA: llega entre 30 y 60 minutos.
-- AMBA: llega en menos de 2 horas (pedidos antes de las 16 hs).
-- Resto del país: enviamos por Andreani.'),
+  ('medios_de_pago', ''),
+  ('envios', ''),
   ('info_general', ''),
+  ('compliance_rules', ''),
   ('uber_envio_template',
-   '🛵 ¡Tu pedido #{numero} ya salió para entrega con Uber Moto!
+   '🛵 ¡Tu pedido #{numero} ya salió para entrega!
 
 Seguí al repartidor en tiempo real acá:
 {link}
@@ -143,23 +146,3 @@ Seguí al repartidor en tiempo real acá:
 Tu código de entrega es: *{codigo}*
 Decíselo al repartidor cuando llegue para recibir tu pedido. ¡Gracias por tu compra! 💚')
 on conflict (key) do nothing;
-
--- One-time correction: instances seeded before the delivery-hours fix kept the
--- old `envios` text ("Lunes a Sábados de 11 a 18 hs"), which no longer matches the
--- schedule enforced in code (server/src/agent/hours.ts). Bring an UNTOUCHED row up
--- to date; if the owner already edited it from the dashboard, this matches nothing
--- and leaves their version alone.
-update settings set value =
-'Envíos (los hace Vapenic; los pedidos se cargan desde la web):
-- Lunes a Jueves: entregamos de 11 a 17 hs.
-- Viernes y Sábados: entregamos de 11 a 3 AM.
-- Domingos: cerrado.
-- CABA: llega entre 30 y 60 minutos.
-- AMBA: llega en menos de 2 horas (pedidos antes de las 16 hs).
-- Resto del país: enviamos por Andreani.', updated_at = now()
-where key = 'envios' and value =
-'Envíos (entregamos de Lunes a Sábados de 11 a 18 hs):
-- CABA: llega entre 30 y 60 minutos.
-- AMBA: llega en menos de 2 horas (pedidos antes de las 16 hs).
-- Resto del país: enviamos por Andreani.
-- Viernes y Sábados: entregamos en todo CABA hasta las 3 AM (llega en ~30 min).';

@@ -1,6 +1,6 @@
 import { jwtVerify } from 'jose';
 
-export const SESSION_COOKIE = 'nico_session';
+export const SESSION_COOKIE = 'arix_session';
 
 /** Verify the session cookie (used by middleware to gate routes). */
 export async function isValidSession(token: string | undefined): Promise<boolean> {

@@ -3,7 +3,7 @@ import { config } from '../config';
 
 const SECRET = new TextEncoder().encode(config.AUTH_JWT_SECRET);
 
-export const SESSION_COOKIE = 'nico_session';
+export const SESSION_COOKIE = 'arix_session';
 
 export interface SessionUser {
   id: string;

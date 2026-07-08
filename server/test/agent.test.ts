@@ -15,7 +15,7 @@ vi.mock('../src/agent/minimax', () => ({
 
 vi.mock('../src/agent/tools', () => ({ toolDefinitions: [], toolNames: [], runTool }));
 
-import { runNico } from '../src/agent/nico';
+import { runAgent } from '../src/agent/agent';
 import type { Message, ToolContext } from '../src/types';
 
 const ctx: ToolContext = {
@@ -35,7 +35,7 @@ beforeEach(() => {
   runTool.mockReset();
 });
 
-describe('runNico harness', () => {
+describe('runAgent harness', () => {
   it('runs a tool call, then returns the final answer with <think> stripped', async () => {
     create
       .mockResolvedValueOnce({
@@ -46,7 +46,7 @@ describe('runNico harness', () => {
               role: 'assistant',
               content: '<think>busco la orden</think>',
               tool_calls: [
-                { id: 'call_1', type: 'function', function: { name: 'buscar_orden', arguments: '{"numero_orden":"1042"}' } },
+                { id: 'call_1', type: 'function', function: { name: 'find_order', arguments: '{"order_number":"1042"}' } },
               ],
             },
           },
@@ -66,10 +66,10 @@ describe('runNico harness', () => {
       });
     runTool.mockResolvedValue(JSON.stringify({ encontrada: true, total: '15400' }));
 
-    const reply = await runNico(ctx, history);
+    const reply = await runAgent(ctx, history);
 
     expect(reply).toBe('¡Listo Juan! Tu pago quedó confirmado 🙌');
-    expect(runTool).toHaveBeenCalledWith('buscar_orden', '{"numero_orden":"1042"}', ctx);
+    expect(runTool).toHaveBeenCalledWith('find_order', '{"order_number":"1042"}', ctx);
     expect(create).toHaveBeenCalledTimes(2);
   });
 
@@ -78,13 +78,13 @@ describe('runNico harness', () => {
       choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'Hola! ¿En qué te ayudo?', tool_calls: [] } }],
     });
 
-    const reply = await runNico(ctx, history);
+    const reply = await runAgent(ctx, history);
     expect(reply).toBe('Hola! ¿En qué te ayudo?');
     expect(runTool).not.toHaveBeenCalled();
   });
 });
 
-describe('runNico input/output guards', () => {
+describe('runAgent input/output guards', () => {
   const sentMessages = () =>
     create.mock.calls[0][0].messages as { role: string; content: string }[];
 
@@ -96,7 +96,7 @@ describe('runNico input/output guards', () => {
       { id: 'm1', direction: 'in', sender: 'customer', body: null, msg_type: 'sticker' },
     ] as unknown as Message[];
 
-    await runNico(ctx, stickerHistory);
+    await runAgent(ctx, stickerHistory);
 
     const userTurn = sentMessages().find((m) => m.role === 'user');
     expect(userTurn?.content).toContain('sticker');
@@ -111,7 +111,7 @@ describe('runNico input/output guards', () => {
       { id: 'm1', direction: 'in', sender: 'customer', body: '', msg_type: 'audio' },
     ] as unknown as Message[];
 
-    await runNico(ctx, audioHistory);
+    await runAgent(ctx, audioHistory);
 
     const userTurn = sentMessages().find((m) => m.role === 'user');
     expect(userTurn?.content).toMatch(/audio/i);
@@ -121,7 +121,7 @@ describe('runNico input/output guards', () => {
     create.mockResolvedValueOnce({
       choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: '¡Listo!', tool_calls: [] } }],
     });
-    await runNico(ctx, history);
+    await runAgent(ctx, history);
     expect(create.mock.calls[0][0].reasoning_split).toBeUndefined();
   });
 
@@ -129,7 +129,7 @@ describe('runNico input/output guards', () => {
     { id: 'm1', direction: 'in', sender: 'customer', body: '¿qué tienen en stock?', msg_type: 'text' },
   ] as unknown as Message[];
 
-  it('forces buscar_catalogo when it answers about products without a lookup', async () => {
+  it('forces search_catalog when it answers about products without a lookup', async () => {
     create
       .mockResolvedValueOnce({
         choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'Tenemos un montón!', tool_calls: [] } }],
@@ -142,7 +142,7 @@ describe('runNico input/output guards', () => {
               role: 'assistant',
               content: '',
               tool_calls: [
-                { id: 'call_1', type: 'function', function: { name: 'buscar_catalogo', arguments: '{}' } },
+                { id: 'call_1', type: 'function', function: { name: 'search_catalog', arguments: '{}' } },
               ],
             },
           },
@@ -153,13 +153,13 @@ describe('runNico input/output guards', () => {
       });
     runTool.mockResolvedValue(JSON.stringify({ productos: [{ nombre: 'Elf Bar' }] }));
 
-    const reply = await runNico(ctx, catalogHistory);
+    const reply = await runAgent(ctx, catalogHistory);
 
     expect(create.mock.calls[1][0].tool_choice).toEqual({
       type: 'function',
-      function: { name: 'buscar_catalogo' },
+      function: { name: 'search_catalog' },
     });
-    expect(runTool).toHaveBeenCalledWith('buscar_catalogo', '{}', ctx);
+    expect(runTool).toHaveBeenCalledWith('search_catalog', '{}', ctx);
     expect(reply).toContain('Elf Bar');
     expect(create).toHaveBeenCalledTimes(3);
   });
@@ -173,7 +173,7 @@ describe('runNico input/output guards', () => {
         choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'Tenemos Ignite a $5000', tool_calls: [] } }],
       });
 
-    const reply = await runNico(ctx, catalogHistory);
+    const reply = await runAgent(ctx, catalogHistory);
 
     expect(reply).toMatch(/chequear/);
     expect(runTool).not.toHaveBeenCalled();
@@ -189,7 +189,7 @@ describe('runNico input/output guards', () => {
         choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'Ситуация: клиент', tool_calls: [] } }],
       });
 
-    const reply = await runNico(ctx, history);
+    const reply = await runAgent(ctx, history);
     expect(reply).toMatch(/problemita/); // FALLBACK
     expect(create).toHaveBeenCalledTimes(2);
   });
@@ -203,7 +203,7 @@ describe('runNico input/output guards', () => {
         choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: '¡Hola! ¿Qué andás buscando?', tool_calls: [] } }],
       });
 
-    const reply = await runNico(ctx, history);
+    const reply = await runAgent(ctx, history);
     expect(reply).toBe('¡Hola! ¿Qué andás buscando?');
     expect(create).toHaveBeenCalledTimes(2);
   });

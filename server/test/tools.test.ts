@@ -11,14 +11,14 @@ const ctx: ToolContext = {
 };
 
 describe('tool registry', () => {
-  it('exposes Nico’s skills', () => {
+  it('exposes the agent’s skills', () => {
     expect(toolNames).toEqual(
       expect.arrayContaining([
-        'buscar_catalogo',
-        'ver_producto',
-        'buscar_orden',
-        'confirmar_pago',
-        'derivar_a_humano',
+        'search_catalog',
+        'view_product',
+        'find_order',
+        'confirm_payment',
+        'handoff_to_human',
       ]),
     );
   });
@@ -31,7 +31,7 @@ describe('runTool dispatch', () => {
   });
 
   it('returns an error for invalid JSON arguments', async () => {
-    const out = JSON.parse(await runTool('buscar_orden', '{not json', ctx));
+    const out = JSON.parse(await runTool('find_order', '{not json', ctx));
     expect(out.error).toMatch(/JSON/);
   });
 });

@@ -40,12 +40,12 @@ beforeEach(() => {
   setConversationEmail.mockReset().mockResolvedValue(undefined);
 });
 
-describe('confirmar_pago', () => {
+describe('confirm_payment', () => {
   it('confirms when phone matches, state is on-hold, and amount matches', async () => {
     resolveOrderByNumber.mockResolvedValue(order());
     updateOrderStatus.mockResolvedValue({ status: 'processing' });
     const onConsumed = vi.fn();
-    const res = await confirmar({ numero_orden: '1042', monto_comprobante: 15400 }, ctxWith('5491112345678', onConsumed));
+    const res = await confirmar({ order_number: '1042', receipt_amount: 15400 }, ctxWith('5491112345678', onConsumed));
     expect(res.ok).toBe(true);
     expect(res.confirmada).toBe(true);
     expect(updateOrderStatus).toHaveBeenCalledWith(5, 'processing');
@@ -56,7 +56,7 @@ describe('confirmar_pago', () => {
     resolveOrderByNumber.mockResolvedValue(order());
     updateOrderStatus.mockResolvedValue({ status: 'processing' });
     const res = await confirmar(
-      { numero_orden: '1042', monto_comprobante: 15400, email: 'Cliente@Mail.com' },
+      { order_number: '1042', receipt_amount: 15400, email: 'Cliente@Mail.com' },
       ctxWith('5499999999999'),
     );
     expect(res.ok).toBe(true);
@@ -65,7 +65,7 @@ describe('confirmar_pago', () => {
 
   it('asks for email (pedir_email) when phone does not match and no email given', async () => {
     resolveOrderByNumber.mockResolvedValue(order());
-    const res = await confirmar({ numero_orden: '1042', monto_comprobante: 15400 }, ctxWith('5499999999999'));
+    const res = await confirmar({ order_number: '1042', receipt_amount: 15400 }, ctxWith('5499999999999'));
     expect(res.ok).toBe(false);
     expect(res.motivo).toBe('pedir_email');
     expect(updateOrderStatus).not.toHaveBeenCalled();
@@ -73,14 +73,14 @@ describe('confirmar_pago', () => {
 
   it('asks for email when the chat phone is unknown', async () => {
     resolveOrderByNumber.mockResolvedValue(order());
-    const res = await confirmar({ numero_orden: '1042', monto_comprobante: 15400 }, ctxWith(null));
+    const res = await confirmar({ order_number: '1042', receipt_amount: 15400 }, ctxWith(null));
     expect(res.motivo).toBe('pedir_email');
   });
 
   it('rejects (identidad_no_verificable) when phone and email both wrong', async () => {
     resolveOrderByNumber.mockResolvedValue(order());
     const res = await confirmar(
-      { numero_orden: '1042', monto_comprobante: 15400, email: 'otro@mail.com' },
+      { order_number: '1042', receipt_amount: 15400, email: 'otro@mail.com' },
       ctxWith('5499999999999'),
     );
     expect(res.ok).toBe(false);
@@ -90,7 +90,7 @@ describe('confirmar_pago', () => {
 
   it('does NOT reactivate a refunded order even if the amount matches', async () => {
     resolveOrderByNumber.mockResolvedValue(order({ status: 'refunded' }));
-    const res = await confirmar({ numero_orden: '1042', monto_comprobante: 15400 }, ctxWith('5491112345678'));
+    const res = await confirmar({ order_number: '1042', receipt_amount: 15400 }, ctxWith('5491112345678'));
     expect(res.ok).toBe(false);
     expect(res.motivo).toBe('orden_no_confirmable');
     expect(updateOrderStatus).not.toHaveBeenCalled();
@@ -98,7 +98,7 @@ describe('confirmar_pago', () => {
 
   it('rejects when the amount does not match', async () => {
     resolveOrderByNumber.mockResolvedValue(order());
-    const res = await confirmar({ numero_orden: '1042', monto_comprobante: 99999 }, ctxWith('5491112345678'));
+    const res = await confirmar({ order_number: '1042', receipt_amount: 99999 }, ctxWith('5491112345678'));
     expect(res.ok).toBe(false);
     expect(res.motivo).toBe('monto_no_coincide');
     expect(updateOrderStatus).not.toHaveBeenCalled();
@@ -106,7 +106,7 @@ describe('confirmar_pago', () => {
 
   it('reports orden_no_encontrada when the order does not resolve', async () => {
     resolveOrderByNumber.mockResolvedValue(null);
-    const res = await confirmar({ numero_orden: 'zzz', monto_comprobante: 15400 }, ctxWith('5491112345678'));
+    const res = await confirmar({ order_number: 'zzz', receipt_amount: 15400 }, ctxWith('5491112345678'));
     expect(res.ok).toBe(false);
     expect(res.motivo).toBe('orden_no_encontrada');
   });

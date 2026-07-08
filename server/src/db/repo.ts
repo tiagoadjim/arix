@@ -186,7 +186,7 @@ export async function markMessageFailed(id: string, error: string): Promise<void
 
 export async function getRecentMessages(
   conversationId: string,
-  limit = config.NICO_HISTORY_LIMIT,
+  limit = config.AGENT_HISTORY_LIMIT,
 ): Promise<Message[]> {
   const rows = await many<Message>(
     `select * from messages where conversation_id = $1 order by created_at desc limit $2`,

@@ -5,15 +5,15 @@ import { toolDefinitions } from '../agent/tools';
 import type { ToolContext } from '../types';
 
 /**
- * Empirical probe against the REAL MiniMax API (uses MINIMAX_API_KEY).
+ * Empirical probe against the REAL MiniMax API (uses LLM_API_KEY).
  *
  * Confirms the regression + fix hands-on:
- *  - with reasoning_split OFF (the fix) M3 should call 'buscar_catalogo' on a
+ *  - with reasoning_split OFF (the fix) M3 should call 'search_catalog' on a
  *    catalog question;
  *  - with reasoning_split ON (the regression) it tends to answer from parametric
  *    memory without a tool call.
  * Also checks whether MiniMax accepts tool_choice:{type:'function'} (decides the
- * grounding-lock fallback in runNico).
+ * grounding-lock fallback in runAgent).
  *
  * Usage: pnpm tsx src/scripts/probe-tools.ts
  */
@@ -41,17 +41,17 @@ async function ask(
     messages: baseMessages,
     tools: toolDefinitions,
     temperature: 0.4,
-    max_tokens: 4096, // match runNico so inline <think> isn't truncated before the tool call
+    max_tokens: 4096, // match runAgent so inline <think> isn't truncated before the tool call
     ...extra,
   };
   try {
     const resp = await minimax.chat.completions.create(body);
     const msg = resp.choices[0]?.message;
     const toolName = msg?.tool_calls?.[0]?.type === 'function' ? msg.tool_calls[0].function.name : undefined;
-    const called = toolName === 'buscar_catalogo';
+    const called = toolName === 'search_catalog';
     // eslint-disable-next-line no-console
     console.log(
-      `\n[${label}]\n  tool_call: ${toolName ?? '(ninguno)'} ${called ? '✅' : '❌ (esperado: buscar_catalogo)'}\n  content: ${JSON.stringify(msg?.content ?? '').slice(0, 200)}`,
+      `\n[${label}]\n  tool_call: ${toolName ?? '(ninguno)'} ${called ? '✅' : '❌ (esperado: search_catalog)'}\n  content: ${JSON.stringify(msg?.content ?? '').slice(0, 200)}`,
     );
   } catch (err) {
     // eslint-disable-next-line no-console
@@ -60,13 +60,13 @@ async function ask(
 }
 
 async function main(): Promise<void> {
-  // The fix: no reasoning_split → expect a buscar_catalogo tool_call.
+  // The fix: no reasoning_split → expect a search_catalog tool_call.
   await ask('reasoning_split OFF (fix)', {});
   // The regression: reasoning_split on → expect degradation / no tool_call.
   await ask('reasoning_split ON (regresión)', { reasoning_split: true });
   // Does MiniMax honor a forced function choice? Decides the grounding-lock path.
-  await ask('tool_choice forzado a buscar_catalogo', {
-    tool_choice: { type: 'function', function: { name: 'buscar_catalogo' } },
+  await ask('tool_choice forzado a search_catalog', {
+    tool_choice: { type: 'function', function: { name: 'search_catalog' } },
   });
   process.exit(0);
 }

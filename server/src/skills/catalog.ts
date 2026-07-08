@@ -14,10 +14,13 @@ function flavorsOf(product: WcProduct): string[] {
   return attr?.options ?? [];
 }
 
-// Headless: the storefront is WC_FRONT_URL (shop.vapenic.com.ar), NOT the
-// WordPress/REST domain. Product page = <front>/producto/<slug>.
+// Headless: the storefront is WC_FRONT_URL, NOT the WordPress/REST domain.
+// WC_FRONT_URL is optional — fall back to WC_URL when it isn't configured (a
+// later phase switches this to the product's own `permalink` from the API).
+// Product page = <front>/producto/<slug>.
 function productLink(product: WcProduct): string {
-  return `${config.WC_FRONT_URL.replace(/\/$/, '')}/producto/${product.slug}`;
+  const base = (config.WC_FRONT_URL || config.WC_URL).replace(/\/$/, '');
+  return `${base}/producto/${product.slug}`;
 }
 
 function variationSummary(v: WcVariation) {
@@ -35,31 +38,31 @@ export const catalogTools: ToolSpec[] = [
     definition: {
       type: 'function',
       function: {
-        name: 'buscar_catalogo',
+        name: 'search_catalog',
         description:
-          'Busca productos en la tienda Vapenic (WooCommerce) por texto. Devuelve nombre, precio, stock y sabores disponibles. Usalo siempre que el cliente pregunte por productos, precios, sabores o disponibilidad. NUNCA inventes precios ni stock: usá esta tool.',
+          'Searches the store (WooCommerce) for products by text. Returns name, price, stock and available flavors. Use it whenever the customer asks about products, prices, flavors or availability. NEVER invent prices or stock: use this tool.',
         parameters: {
           type: 'object',
           properties: {
-            consulta: {
+            query: {
               type: 'string',
-              description: 'Texto a buscar, ej: "pod descartable", "mango", "Elf Bar".',
+              description: 'Text to search for, e.g. "disposable pod", "mango", "Elf Bar".',
             },
-            solo_con_stock: {
+            in_stock_only: {
               type: 'boolean',
-              description: 'Si es true, sólo devuelve productos con stock disponible.',
+              description: 'If true, only returns products that currently have stock.',
             },
           },
-          required: ['consulta'],
+          required: ['query'],
         },
       },
     },
     handler: async (args) => {
-      const consulta = String(args.consulta ?? '').trim();
-      const soloStock = args.solo_con_stock === true;
+      const query = String(args.query ?? '').trim();
+      const inStockOnly = args.in_stock_only === true;
       const products = await woo.searchProducts({
-        search: consulta,
-        stockStatus: soloStock ? 'instock' : undefined,
+        search: query,
+        stockStatus: inStockOnly ? 'instock' : undefined,
         perPage: 10,
       });
 
@@ -98,13 +101,13 @@ export const catalogTools: ToolSpec[] = [
     definition: {
       type: 'function',
       function: {
-        name: 'ver_producto',
+        name: 'view_product',
         description:
-          'Trae el detalle completo de un producto por su id (precio, descripción corta, sabores con stock por sabor). Usalo cuando el cliente quiere más detalle de un producto puntual que ya apareció en buscar_catalogo.',
+          "Fetches the full detail of a product by its id (price, short description, flavors with per-flavor stock). Use it when the customer wants more detail on a specific product that already came up in search_catalog.",
         parameters: {
           type: 'object',
           properties: {
-            product_id: { type: 'number', description: 'El id del producto.' },
+            product_id: { type: 'number', description: 'The product id.' },
           },
           required: ['product_id'],
         },

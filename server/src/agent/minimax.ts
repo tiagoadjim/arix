@@ -7,11 +7,11 @@ import { config } from '../config';
  * Base URL: https://api.minimax.io/v1
  */
 export const minimax = new OpenAI({
-  apiKey: config.MINIMAX_API_KEY,
-  baseURL: config.MINIMAX_BASE_URL,
+  apiKey: config.LLM_API_KEY,
+  baseURL: config.LLM_BASE_URL,
 });
 
-export const MODEL = config.MINIMAX_MODEL;
+export const MODEL = config.LLM_MODEL;
 
 /**
  * M3 is a thinking model: when reasoning is inlined it wraps it in

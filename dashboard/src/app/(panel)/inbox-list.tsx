@@ -48,7 +48,7 @@ export function InboxList() {
         const data = await api.conversations();
         if (!alive) return;
 
-        // Detect new customer messages (unread grew — never fires on Nico's own
+        // Detect new customer messages (unread grew — never fires on the agent's own
         // replies, which reset unread to 0) and fresh human escalations.
         let gotMessage = false;
         let gotHuman = false;
@@ -103,9 +103,7 @@ export function InboxList() {
   return (
     <aside className="sidebar">
       <div className="sidebar-header">
-        <div className="brand">
-          Nico <small>· Vapenic</small>
-        </div>
+        <div className="brand">Arix</div>
         <div style={{ display: 'flex', gap: 6 }}>
           <button
             className="btn secondary"
@@ -150,7 +148,7 @@ export function InboxList() {
               </div>
               <div className="conv-preview">{c.last_message_preview || '—'}</div>
               <div className="badges">
-                <span className={`badge ${c.mode}`}>{c.mode === 'human' ? '👤 Humano' : '🤖 Nico'}</span>
+                <span className={`badge ${c.mode}`}>{c.mode === 'human' ? '👤 Humano' : '🤖 Arix'}</span>
                 {c.unread_count > 0 && <span className="badge unread">{c.unread_count}</span>}
               </div>
             </Link>

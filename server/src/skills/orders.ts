@@ -15,10 +15,10 @@ export const STATUS_ES: Record<string, string> = {
   failed: 'fallido',
 };
 
-/** Default WhatsApp template sent to the customer when an order ships via Uber Moto.
+/** Default WhatsApp template sent to the customer when an order ships for delivery.
  *  Placeholders: {numero} {link} {codigo}. Editable from the dashboard (settings key
  *  `uber_envio_template`); this constant is the fallback when that setting is empty. */
-export const DEFAULT_DELIVERY_TEMPLATE = `🛵 ¡Tu pedido #{numero} ya salió para entrega con Uber Moto!
+export const DEFAULT_DELIVERY_TEMPLATE = `🛵 ¡Tu pedido #{numero} ya salió para entrega!
 
 Seguí al repartidor en tiempo real acá:
 {link}
@@ -117,32 +117,32 @@ export const orderTools: ToolSpec[] = [
     definition: {
       type: 'function',
       function: {
-        name: 'buscar_orden',
+        name: 'find_order',
         description:
-          'Busca una orden por su número y verifica identidad: por el teléfono del chat o, si no coincide, por el email que te dé el cliente. Devuelve estado, total e items SOLO si la identidad está verificada. Pedí el número de orden antes de usar esta tool.',
+          "Looks up an order by its number and verifies identity: by the chat's phone or, if that doesn't match, by an email the customer gives you. Returns status, total and items ONLY if identity is verified. Ask for the order number before using this tool.",
         parameters: {
           type: 'object',
           properties: {
-            numero_orden: {
+            order_number: {
               type: 'string',
-              description: 'El número de orden que dio el cliente (sólo dígitos/guiones).',
+              description: 'The order number the customer gave (digits/dashes only).',
             },
             email: {
               type: 'string',
               description:
-                'Opcional. Email del cliente, para verificar identidad cuando el teléfono del chat no coincide con la orden.',
+                "Optional. The customer's email, to verify identity when the chat's phone doesn't match the order.",
             },
           },
-          required: ['numero_orden'],
+          required: ['order_number'],
         },
       },
     },
     handler: async (args, ctx) => {
-      const numero = String(args.numero_orden ?? '').trim();
+      const orderNumber = String(args.order_number ?? '').trim();
       const email = String(args.email ?? '').trim();
-      if (!numero) return { encontrada: false, motivo: 'falta_numero_orden' };
-      const order = await woo.resolveOrderByNumber(numero);
-      if (!order) return { encontrada: false, numero };
+      if (!orderNumber) return { encontrada: false, motivo: 'falta_numero_orden' };
+      const order = await woo.resolveOrderByNumber(orderNumber);
+      if (!order) return { encontrada: false, numero: orderNumber };
 
       // Privacy gate: order numbers are guessable. Only reveal PII/total when the
       // identity is verified (phone or email). Otherwise ask for the email.

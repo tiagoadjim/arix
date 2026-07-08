@@ -2,10 +2,19 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { AlertCircleIcon } from 'lucide-react';
 import { login } from '@/lib/api';
+import { Logo } from '@/components/logo';
+import { useT } from '@/lib/i18n/provider';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Card, CardContent, CardHeader } from '@/components/ui/card';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 
 export default function LoginPage() {
   const router = useRouter();
+  const { t } = useT();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -20,26 +29,56 @@ export default function LoginPage() {
       router.push('/');
       router.refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Error de login');
+      setError(err instanceof Error ? err.message : t.login.errorGeneric);
     } finally {
       setLoading(false);
     }
   }
 
   return (
-    <div className="login-wrap">
-      <form className="login-card" onSubmit={onSubmit}>
-        <h1>Arix</h1>
-        <p>Panel de atención</p>
-        <label>Email</label>
-        <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoFocus />
-        <label>Contraseña</label>
-        <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
-        <button className="btn" type="submit" disabled={loading}>
-          {loading ? 'Ingresando…' : 'Ingresar'}
-        </button>
-        {error && <div className="error">{error}</div>}
-      </form>
+    <div className="grid min-h-screen place-items-center bg-background p-4">
+      <Card className="w-full max-w-sm">
+        <CardHeader className="flex flex-col items-center gap-3 text-center">
+          <Logo markClassName="h-8 w-8 text-primary" />
+          <p className="text-sm text-muted-foreground">{t.login.subtitle}</p>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={onSubmit} className="flex flex-col gap-4" noValidate>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="email">{t.login.emailLabel}</Label>
+              <Input
+                id="email"
+                type="email"
+                autoComplete="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+                autoFocus
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="password">{t.login.passwordLabel}</Label>
+              <Input
+                id="password"
+                type="password"
+                autoComplete="current-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+              />
+            </div>
+            <Button type="submit" disabled={loading} className="mt-2">
+              {loading ? t.login.submitting : t.login.submit}
+            </Button>
+            {error && (
+              <Alert variant="destructive">
+                <AlertCircleIcon />
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
+            )}
+          </form>
+        </CardContent>
+      </Card>
     </div>
   );
 }

@@ -34,3 +34,6 @@ coverage/
 
 # local receipt storage (dev)
 data/
+
+# ai-dev tool caches
+.atl/

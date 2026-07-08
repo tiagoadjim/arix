@@ -110,7 +110,7 @@ if (!parsed.success) {
     .map((i) => `  - ${i.path.join('.') || '(root)'}: ${i.message}`)
     .join('\n');
   // eslint-disable-next-line no-console
-  console.error(`\n❌ Invalid environment configuration:\n${issues}\n\nSee .env.example.\n`);
+  console.error(`\n❌ Invalid environment configuration:\n${issues}\n\nSee env.example.\n`);
   process.exit(1);
 }
 

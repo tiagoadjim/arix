@@ -8,7 +8,7 @@ Requirements: Node 20+ (tested on Node 24), [pnpm](https://pnpm.io), and a local
 
 ```bash
 pnpm install
-cp .env.example .env        # fill in DATABASE_URL and AUTH_JWT_SECRET at minimum
+cp env.example .env         # fill in DATABASE_URL and AUTH_JWT_SECRET at minimum
 pnpm dev:server             # terminal 1 — API + WhatsApp gateway
 pnpm dev:dashboard          # terminal 2 — dashboard on http://localhost:3000
 ```

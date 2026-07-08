@@ -37,3 +37,4 @@ data/
 
 # ai-dev tool caches
 .atl/
+.env.example

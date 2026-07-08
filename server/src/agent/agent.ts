@@ -1,9 +1,9 @@
 import type OpenAI from 'openai';
-import { minimax, MODEL, stripThinking } from './minimax';
+import { getLlm, stripThinking } from './minimax';
 import { buildSystemPrompt } from './prompt';
 import { toolDefinitions, runTool } from './tools';
-import { getGuardrails } from './guardrails';
-import { config } from '../config';
+import { getGuardrails, type Guardrails } from './guardrails';
+import { businessProfile, complianceRules, hoursConfig, infoBlocks, woo } from '../config/runtime';
 import { logger } from '../logger';
 import type { Message, ToolContext } from '../types';
 
@@ -11,10 +11,8 @@ type ChatMessage = OpenAI.Chat.Completions.ChatCompletionMessageParam;
 
 const MAX_STEPS = 6;
 
-const guardrails = getGuardrails(config.AGENT_LANGUAGE);
-
 /** Map persisted conversation history into OpenAI chat messages. */
-function historyToMessages(history: Message[], ctx: ToolContext): ChatMessage[] {
+function historyToMessages(history: Message[], ctx: ToolContext, guardrails: Guardrails): ChatMessage[] {
   const out: ChatMessage[] = [];
   history.forEach((m, idx) => {
     const isLast = idx === history.length - 1;
@@ -63,15 +61,40 @@ function finalText(content: OpenAI.Chat.Completions.ChatCompletionMessage['conte
  * Run the agent for one customer turn. `history` is the recent conversation
  * (chronological, last item = the message that just arrived). Returns the text
  * to send back to the customer (already stripped of <think> reasoning).
+ *
+ * Callers MUST check `(await llm()).configured` first (see
+ * handlers/messages.ts) — this function assumes an LLM client is usable.
  */
-export async function runAgent(
-  ctx: ToolContext,
-  history: Message[],
-  settings: Record<string, string> = {},
-): Promise<string> {
+export async function runAgent(ctx: ToolContext, history: Message[]): Promise<string> {
+  // Resolve everything the turn needs from the runtime config service once,
+  // up front — memoized internally, so this is cheap after the first turn.
+  const [profile, schedule, blocks, rules, wooCfg, llmCfg] = await Promise.all([
+    businessProfile(),
+    hoursConfig(),
+    infoBlocks(),
+    complianceRules(),
+    woo(),
+    getLlm(),
+  ]);
+  const guardrails = getGuardrails(profile.language);
+
   const messages: ChatMessage[] = [
-    { role: 'system', content: buildSystemPrompt(ctx, settings) },
-    ...historyToMessages(history, ctx),
+    {
+      role: 'system',
+      content: buildSystemPrompt(ctx, {
+        businessName: profile.businessName,
+        agentName: profile.agentName,
+        language: profile.language,
+        discloseBot: profile.discloseBot,
+        timezone: profile.timezone,
+        hoursSchedule: schedule,
+        // WC_FRONT_URL is optional — fall back to the REST domain when unset.
+        storefrontUrl: wooCfg.frontUrl || wooCfg.url,
+        infoBlocks: blocks,
+        complianceRules: rules,
+      }),
+    },
+    ...historyToMessages(history, ctx, guardrails),
   ];
   let retried = false; // allow one corrective retry if the reply looks garbled
   // Grounding lock: never let a product/price/stock fact reach the customer
@@ -88,7 +111,7 @@ export async function runAgent(
     // SDK forwards unknown body keys verbatim.
     const body: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming &
       Record<string, unknown> = {
-      model: MODEL,
+      model: llmCfg.model,
       messages,
       tools: toolDefinitions,
       temperature: 0.4,
@@ -98,15 +121,15 @@ export async function runAgent(
     };
     // Keep the model's thinking OUT of `content` (it goes to separate
     // reasoning_content/reasoning_details fields) so it can never leak to the
-    // customer. LLM_THINKING_DISABLED is an optional hard-off switch.
-    if (config.LLM_REASONING_SPLIT) body.reasoning_split = true;
-    if (config.LLM_THINKING_DISABLED) body.thinking = { type: 'disabled' };
+    // customer. thinkingDisabled is an optional hard-off switch.
+    if (llmCfg.reasoningSplit) body.reasoning_split = true;
+    if (llmCfg.thinkingDisabled) body.thinking = { type: 'disabled' };
     // Grounding lock forced a catalog lookup this round: make the model call it.
     if (forceCatalogNext) {
       body.tool_choice = { type: 'function', function: { name: 'search_catalog' } };
       forceCatalogNext = false; // one-shot
     }
-    const resp = await minimax.chat.completions.create(body);
+    const resp = await llmCfg.client.chat.completions.create(body);
 
     const choice = resp.choices[0];
     if (!choice) return guardrails.fallback;

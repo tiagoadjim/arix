@@ -1,17 +1,50 @@
 import OpenAI from 'openai';
-import { config } from '../config';
+import { llm as resolveLlm, settingsVersion } from '../config/runtime';
+
+// Fallback default for a single-provider (MiniMax) setup — used only when the
+// resolved `llm.model` / `llm.base_url` are empty ("use the provider
+// default"). Phase 4 replaces this whole file with a multi-provider registry
+// (server/src/agent/llm/{providers,client}.ts) that owns a default per
+// provider; these two constants are this file's entire "provider knowledge".
+const DEFAULT_BASE_URL = 'https://api.minimax.io/v1';
+const DEFAULT_MODEL = 'MiniMax-M3';
+
+export interface LlmSnapshot {
+  client: OpenAI;
+  model: string;
+  reasoningSplit: boolean;
+  thinkingDisabled: boolean;
+}
+
+let cached: (LlmSnapshot & { version: number }) | null = null;
 
 /**
- * Minimax via the OpenAI-compatible API.
- * MiniMax-M3 supports BOTH vision (read receipt images) and tool calling.
- * Base URL: https://api.minimax.io/v1
+ * Resolve the LLM client from the runtime config service (settings table +
+ * env seed), memoized until a settings write calls runtime.invalidate() —
+ * so a dashboard save takes effect on the next turn with no restart.
  */
-export const minimax = new OpenAI({
-  apiKey: config.LLM_API_KEY,
-  baseURL: config.LLM_BASE_URL,
-});
+export async function getLlm(): Promise<LlmSnapshot> {
+  const version = settingsVersion();
+  if (cached && cached.version === version) return cached;
 
-export const MODEL = config.LLM_MODEL;
+  const resolved = await resolveLlm();
+  const snapshot: LlmSnapshot & { version: number } = {
+    version,
+    // A never-configured deployment still gets a client object back (never
+    // null) — the OpenAI SDK requires a non-empty apiKey string to construct.
+    // It's never actually called: handlers/messages.ts checks `configured`
+    // before invoking the agent at all.
+    client: new OpenAI({
+      apiKey: resolved.apiKey || 'unconfigured',
+      baseURL: resolved.baseUrl || DEFAULT_BASE_URL,
+    }),
+    model: resolved.model || DEFAULT_MODEL,
+    reasoningSplit: resolved.reasoningSplit,
+    thinkingDisabled: resolved.thinkingDisabled,
+  };
+  cached = snapshot;
+  return snapshot;
+}
 
 /**
  * M3 is a thinking model: when reasoning is inlined it wraps it in

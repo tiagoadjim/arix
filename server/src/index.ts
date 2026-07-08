@@ -1,12 +1,16 @@
 import { config } from './config';
 import { logger } from './logger';
 import { migrate } from './db/pool';
+import { seedFromEnvOnFirstBoot } from './config/runtime';
 import { WhatsAppGateway } from './whatsapp/socket';
 import { MessageRouter } from './handlers/messages';
 import { createApiServer } from './api/server';
 
 async function main(): Promise<void> {
   await migrate();
+  // Give env-driven deploys a DB row for anything they seed, so the dashboard
+  // has something to take over once an env var is eventually removed.
+  await seedFromEnvOnFirstBoot();
 
   const gateway = new WhatsAppGateway();
   const router = new MessageRouter(gateway);

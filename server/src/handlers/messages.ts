@@ -9,12 +9,12 @@ import {
   getOrCreateConversation,
   getRecentBotConversations,
   getRecentMessages,
-  getSettings,
   insertInboundMessage,
   insertOutboundMessage,
   touchConversation,
 } from '../db/repo';
 import { runAgent } from '../agent/agent';
+import { llm } from '../config/runtime';
 import type { WhatsAppGateway } from '../whatsapp/socket';
 import type { Message, MessageType, ToolContext } from '../types';
 
@@ -45,20 +45,10 @@ const IMAGE_TTL_MS = 15 * 60 * 1000;
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-// Store settings (payment/shipping info) injected into the agent's prompt. Cached
-// briefly so we don't query on every turn; survives transient DB errors.
-let settingsCache: { at: number; data: Record<string, string> } | null = null;
-async function loadSettings(): Promise<Record<string, string>> {
-  if (settingsCache && Date.now() - settingsCache.at < 30_000) return settingsCache.data;
-  try {
-    const data = await getSettings();
-    settingsCache = { at: Date.now(), data };
-    return data;
-  } catch (err) {
-    logger.warn({ err }, 'failed to load settings');
-    return settingsCache?.data ?? {};
-  }
-}
+// Conversations we've already warned about once (LLM not configured yet) — so
+// the flush loop doesn't log the same warning on every debounce cycle while
+// an operator finishes onboarding.
+const warnedUnconfigured = new Set<string>();
 
 /**
  * Split the agent's reply into separate WhatsApp bubbles. The agent separates bubbles
@@ -296,9 +286,19 @@ export class MessageRouter {
         },
       };
 
+      // Unconfigured guard: no LLM API key set anywhere (env or dashboard) yet —
+      // never attempt to answer. The conversation just stays visible/unanswered
+      // in the inbox until an operator finishes onboarding; nothing crashes.
+      if (!(await llm()).configured) {
+        if (!warnedUnconfigured.has(conversationId)) {
+          warnedUnconfigured.add(conversationId);
+          logger.warn({ conversationId }, 'LLM is not configured yet — leaving the conversation unanswered');
+        }
+        return;
+      }
+
       await this.gateway.indicateTyping(conv.wa_jid);
-      const settings = await loadSettings();
-      const reply = await runAgent(ctx, history, settings);
+      const reply = await runAgent(ctx, history);
 
       // A human may have taken over while the agent was thinking — don't talk over them.
       const after = await getConversation(conversationId);

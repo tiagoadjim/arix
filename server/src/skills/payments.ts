@@ -1,5 +1,5 @@
 import { woo } from '../integrations/woocommerce';
-import { config } from '../config';
+import { woo as wooConfig } from '../config/runtime';
 import { insertReceipt, setConversationEmail } from '../db/repo';
 import { logger } from '../logger';
 import { STATUS_ES, checkIdentity } from './orders';
@@ -79,6 +79,7 @@ export const paymentTools: ToolSpec[] = [
       const order = await woo.resolveOrderByNumber(orderNumber);
       if (!order) return { ok: false, motivo: 'orden_no_encontrada', numero: orderNumber };
 
+      const wc = await wooConfig();
       const total = parseAmount(order.total);
       const mediaUrl = ctx.lastImage?.mediaUrl ?? null;
       const messageId = ctx.lastImage?.messageId ?? null;
@@ -147,7 +148,7 @@ export const paymentTools: ToolSpec[] = [
         return { ok: false, motivo: 'no_se_pudo_leer_total_orden' };
       }
 
-      if (!amountsMatch(total, receiptAmount, config.PAYMENT_AMOUNT_TOLERANCE)) {
+      if (!amountsMatch(total, receiptAmount, wc.tolerance)) {
         await record('mismatch', `Monto comprobante ${receiptAmount} ≠ total ${total}.`);
         return {
           ok: false,
@@ -161,7 +162,7 @@ export const paymentTools: ToolSpec[] = [
 
       // Amounts match + identity verified + confirmable state → mark as paid.
       try {
-        const updated = await woo.updateOrderStatus(order.id, config.WC_STATUS_AFTER_PAYMENT);
+        const updated = await woo.updateOrderStatus(order.id, wc.statusAfterPayment);
         await record('match', 'Pago confirmado automáticamente (identidad verificada).');
         ctx.onReceiptConsumed?.();
         return {

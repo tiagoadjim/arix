@@ -1,0 +1,273 @@
+import { AR_TZ, DEFAULT_DELIVERY_SCHEDULE, type Schedule } from '../agent/hours';
+
+/**
+ * Declarative registry of every runtime-configurable setting. This is the
+ * single source of truth for:
+ *  - which dot-namespaced keys exist in the `settings` table,
+ *  - their value type (for parsing DB text / env strings into JS values),
+ *  - which env var seeds them on first boot (and keeps winning while it's set),
+ *  - their default when neither env nor DB has a value,
+ *  - which ones hold secrets (encrypted at rest, never sent to the browser).
+ *
+ * server/src/config/runtime.ts resolves these into typed getters
+ * (llm(), woo(), businessProfile(), …). This file has no logic — it's data,
+ * read by runtime.ts and (later) the settings API/dashboard.
+ */
+
+export type SettingType = 'string' | 'boolean' | 'number' | 'json' | 'enum';
+
+export interface SettingDefinition<T = unknown> {
+  /** Dot-namespaced DB row key, e.g. "llm.api_key". */
+  key: string;
+  /** Namespace prefix (the part before the first dot) — used for grouping in the UI. */
+  group: string;
+  type: SettingType;
+  /** True for values that must be encrypted at rest and never returned in plaintext. */
+  secret?: true;
+  /** Env var that seeds this setting. Precedence while set: env > DB > default. */
+  seedEnv?: string;
+  /** Value used when neither env nor a DB row supplies one. */
+  default: T;
+  /** Allowed values, only for type: 'enum'. */
+  enumValues?: readonly string[];
+  /** Human label (dashboard UI, later phases). */
+  label: string;
+}
+
+export const SETTINGS_SCHEMA: readonly SettingDefinition[] = [
+  // ---- LLM provider ---------------------------------------------------------
+  {
+    key: 'llm.provider',
+    group: 'llm',
+    type: 'enum',
+    enumValues: ['openai', 'anthropic', 'gemini', 'deepseek', 'minimax'],
+    default: 'minimax',
+    seedEnv: 'LLM_PROVIDER',
+    label: 'LLM provider',
+  },
+  {
+    key: 'llm.api_key',
+    group: 'llm',
+    type: 'string',
+    secret: true,
+    default: '',
+    seedEnv: 'LLM_API_KEY',
+    label: 'LLM API key',
+  },
+  {
+    key: 'llm.model',
+    group: 'llm',
+    type: 'string',
+    // '' means "use the provider's default model".
+    default: '',
+    seedEnv: 'LLM_MODEL',
+    label: 'LLM model',
+  },
+  {
+    key: 'llm.base_url',
+    group: 'llm',
+    type: 'string',
+    // '' means "use the provider's default base URL".
+    default: '',
+    seedEnv: 'LLM_BASE_URL',
+    label: 'LLM base URL',
+  },
+  {
+    key: 'llm.reasoning_split',
+    group: 'llm',
+    type: 'boolean',
+    default: false,
+    seedEnv: 'LLM_REASONING_SPLIT',
+    label: 'Split reasoning from the visible reply (provider-specific)',
+  },
+  {
+    key: 'llm.thinking_disabled',
+    group: 'llm',
+    type: 'boolean',
+    default: false,
+    seedEnv: 'LLM_THINKING_DISABLED',
+    label: 'Hard-disable model "thinking" (provider-specific)',
+  },
+  {
+    key: 'llm.vision_fallback',
+    group: 'llm',
+    type: 'enum',
+    enumValues: ['ask_details', 'handoff'],
+    default: 'ask_details',
+    label: 'What to do when the model/config has no vision support',
+  },
+
+  // ---- WooCommerce ------------------------------------------------------------
+  {
+    key: 'wc.url',
+    group: 'wc',
+    type: 'string',
+    default: '',
+    seedEnv: 'WC_URL',
+    label: 'WooCommerce site URL (WordPress/REST domain)',
+  },
+  {
+    key: 'wc.consumer_key',
+    group: 'wc',
+    type: 'string',
+    secret: true,
+    default: '',
+    seedEnv: 'WC_CONSUMER_KEY',
+    label: 'WooCommerce consumer key',
+  },
+  {
+    key: 'wc.consumer_secret',
+    group: 'wc',
+    type: 'string',
+    secret: true,
+    default: '',
+    seedEnv: 'WC_CONSUMER_SECRET',
+    label: 'WooCommerce consumer secret',
+  },
+  {
+    key: 'wc.front_url',
+    group: 'wc',
+    type: 'string',
+    default: '',
+    seedEnv: 'WC_FRONT_URL',
+    label: 'Storefront URL (if different from the REST domain)',
+  },
+  {
+    key: 'wc.currency',
+    group: 'wc',
+    type: 'string',
+    default: 'USD',
+    seedEnv: 'WC_CURRENCY',
+    label: 'Store currency',
+  },
+  {
+    key: 'wc.status_after_payment',
+    group: 'wc',
+    type: 'string',
+    default: 'processing',
+    seedEnv: 'WC_STATUS_AFTER_PAYMENT',
+    label: 'Order status set once a payment is confirmed',
+  },
+  {
+    key: 'wc.status_after_dispatch',
+    group: 'wc',
+    type: 'string',
+    // '' = the dispatch feature sets no custom status (message still sends).
+    default: '',
+    seedEnv: 'WC_STATUS_AFTER_DISPATCH',
+    label: 'Order status set once staff dispatches an order',
+  },
+  {
+    key: 'payment.tolerance',
+    group: 'payment',
+    type: 'number',
+    default: 1,
+    seedEnv: 'PAYMENT_AMOUNT_TOLERANCE',
+    label: 'Absolute amount tolerance when matching a transfer receipt',
+  },
+
+  // ---- Business profile ---------------------------------------------------------
+  {
+    key: 'business.name',
+    group: 'business',
+    type: 'string',
+    default: 'My Store',
+    seedEnv: 'BUSINESS_NAME',
+    label: 'Business name',
+  },
+  {
+    key: 'business.timezone',
+    group: 'business',
+    type: 'string',
+    default: AR_TZ,
+    seedEnv: 'BUSINESS_TIMEZONE',
+    label: 'Business IANA timezone',
+  },
+  {
+    key: 'business.hours',
+    group: 'business',
+    type: 'json',
+    default: DEFAULT_DELIVERY_SCHEDULE as unknown as Schedule,
+    label: 'Weekly delivery schedule',
+  },
+  {
+    key: 'agent.name',
+    group: 'agent',
+    type: 'string',
+    default: 'Arix',
+    seedEnv: 'AGENT_NAME',
+    label: 'Agent display name',
+  },
+  {
+    key: 'agent.language',
+    group: 'agent',
+    type: 'enum',
+    enumValues: ['es', 'en'],
+    default: 'es',
+    seedEnv: 'AGENT_LANGUAGE',
+    label: 'Agent persona language',
+  },
+  {
+    key: 'agent.disclose_bot',
+    group: 'agent',
+    type: 'boolean',
+    default: false,
+    seedEnv: 'AGENT_DISCLOSE_BOT',
+    label: 'Agent discloses it is an AI assistant',
+  },
+
+  // ---- Info blocks + templates (dashboard-editable text, no env seed) --------
+  {
+    key: 'info.payment',
+    group: 'info',
+    type: 'string',
+    default: '',
+    label: 'Payment methods info block',
+  },
+  {
+    key: 'info.shipping',
+    group: 'info',
+    type: 'string',
+    default: '',
+    label: 'Shipping info block',
+  },
+  {
+    key: 'info.general',
+    group: 'info',
+    type: 'string',
+    default: '',
+    label: 'General info / FAQ block',
+  },
+  {
+    key: 'dispatch.template',
+    group: 'dispatch',
+    type: 'string',
+    default: '',
+    label: 'WhatsApp dispatch message template',
+  },
+  {
+    key: 'compliance.rules',
+    group: 'compliance',
+    type: 'string',
+    default: '',
+    label: 'Extra compliance text injected into the system prompt',
+  },
+
+  // ---- Onboarding --------------------------------------------------------------
+  {
+    key: 'setup.completed',
+    group: 'setup',
+    type: 'boolean',
+    default: false,
+    label: 'First-run setup wizard completed',
+  },
+] as const;
+
+export const SETTINGS_BY_KEY: ReadonlyMap<string, SettingDefinition> = new Map(
+  SETTINGS_SCHEMA.map((s) => [s.key, s]),
+);
+
+/** True if `key` is registered and marked as holding a secret value. */
+export function isSecretKey(key: string): boolean {
+  return SETTINGS_BY_KEY.get(key)?.secret === true;
+}

@@ -6,6 +6,8 @@ import { logger } from '../logger';
 import * as repo from '../db/repo';
 import { readReceiptImage } from '../storage';
 import { woo, type WcOrder } from '../integrations/woocommerce';
+import { woo as wooConfig, dispatchTemplate, invalidate as invalidateSettings } from '../config/runtime';
+import { SETTINGS_BY_KEY } from '../config/settings-schema';
 import {
   orderForStaff,
   STATUS_ES,
@@ -14,6 +16,18 @@ import {
 } from '../skills/orders';
 import { SESSION_COOKIE, signSession, verifySession, type SessionUser } from './auth';
 import type { WhatsAppGateway } from '../whatsapp/socket';
+
+// Interim allowlist for PUT /api/settings until Phase 6 replaces this with a
+// typed, per-group DTO. These are the only free-text keys the current (pre-
+// wizard) config page writes; everything else — and anything secret — is
+// rejected here rather than left open to an arbitrary raw KV write.
+const SETTINGS_PUT_ALLOWED_KEYS = new Set([
+  'info.payment',
+  'info.shipping',
+  'info.general',
+  'dispatch.template',
+  'compliance.rules',
+]);
 
 // Constant-time-ish dummy compare target so unknown emails take ~the same time
 // as real ones (prevents login timing-based email enumeration).
@@ -227,11 +241,20 @@ export function createApiServer(deps: { gateway: WhatsAppGateway }) {
   );
 
   // ---- store settings (payment methods, shipping, …) ----
+  // Interim: dumps the raw KV row map, minus anything marked `secret` in the
+  // settings schema (never send even the encrypted blob to the browser).
+  // Phase 6 replaces this with a grouped, sanitized DTO ({value, source, readOnly}).
   app.get(
     '/api/settings',
     requireAuth,
     ah(async (_req, res) => {
-      res.json(await repo.getSettings());
+      const raw = await repo.getSettings();
+      const sanitized: Record<string, string> = {};
+      for (const [key, value] of Object.entries(raw)) {
+        if (SETTINGS_BY_KEY.get(key)?.secret) continue;
+        sanitized[key] = value;
+      }
+      res.json(sanitized);
     }),
   );
   app.put(
@@ -244,7 +267,16 @@ export function createApiServer(deps: { gateway: WhatsAppGateway }) {
         res.status(400).json({ error: 'Falta "key"' });
         return;
       }
+      if (SETTINGS_BY_KEY.get(key)?.secret) {
+        res.status(400).json({ error: 'No se puede escribir un valor secreto por esta vía' });
+        return;
+      }
+      if (!SETTINGS_PUT_ALLOWED_KEYS.has(key)) {
+        res.status(400).json({ error: `Clave de configuración desconocida o restringida: ${key}` });
+        return;
+      }
       await repo.upsertSetting(key, value);
+      invalidateSettings(); // lazy clients/getters must see this on the next read
       res.json({ ok: true });
     }),
   );
@@ -404,8 +436,7 @@ export function createApiServer(deps: { gateway: WhatsAppGateway }) {
         return;
       }
       const user = req.user!;
-      const settings = await repo.getSettings();
-      const template = settings.uber_envio_template?.trim() || DEFAULT_DELIVERY_TEMPLATE;
+      const template = (await dispatchTemplate()).trim() || DEFAULT_DELIVERY_TEMPLATE;
       const body = buildDeliveryMessage(template, {
         numero: orderNumber,
         link: trackingUrl,
@@ -434,14 +465,20 @@ export function createApiServer(deps: { gateway: WhatsAppGateway }) {
       });
       await repo.touchConversation(conv.id, { preview: body, incomingFromCustomer: false });
 
-      // Best-effort: move the order to the dispatch status. If the custom status
-      // isn't registered in WooCommerce this fails — the message still went out.
+      // Best-effort: move the order to the dispatch status, if one is configured.
+      // An empty wc.status_after_dispatch means the dispatch feature sets no
+      // custom status — the message still went out either way. If a custom
+      // status isn't registered in WooCommerce the update fails; it's logged,
+      // not surfaced as an error (the message already sent is the primary action).
       let statusUpdated = false;
-      try {
-        await woo.updateOrderStatus(orderId, config.WC_STATUS_AFTER_DISPATCH);
-        statusUpdated = true;
-      } catch (err) {
-        logger.warn({ err, orderId }, 'could not set dispatch status after delivery message');
+      const wc = await wooConfig();
+      if (wc.statusAfterDispatch) {
+        try {
+          await woo.updateOrderStatus(orderId, wc.statusAfterDispatch);
+          statusUpdated = true;
+        } catch (err) {
+          logger.warn({ err, orderId }, 'could not set dispatch status after delivery message');
+        }
       }
 
       res.status(sendStatus === 'failed' ? 502 : 200).json({ message, statusUpdated });

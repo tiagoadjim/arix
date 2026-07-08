@@ -4,11 +4,11 @@ import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 
 const SECTIONS = [
-  { key: 'medios_de_pago', label: 'Medios de pago', hint: 'Alias para transferir, recargos, etc. El agente responde con esto.' },
-  { key: 'envios', label: 'Formas de envío', hint: 'Zonas, horarios y tiempos de entrega.' },
-  { key: 'info_general', label: 'Información general / FAQ', hint: 'Cualquier otra cosa que el agente deba saber.' },
+  { key: 'info.payment', label: 'Medios de pago', hint: 'Alias para transferir, recargos, etc. El agente responde con esto.' },
+  { key: 'info.shipping', label: 'Formas de envío', hint: 'Zonas, horarios y tiempos de entrega.' },
+  { key: 'info.general', label: 'Información general / FAQ', hint: 'Cualquier otra cosa que el agente deba saber.' },
   {
-    key: 'uber_envio_template',
+    key: 'dispatch.template',
     label: 'Mensaje de envío Uber Moto',
     hint: 'Plantilla del WhatsApp al despachar un pedido. Placeholders: {numero} {link} {codigo}.',
   },

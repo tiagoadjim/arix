@@ -1,6 +1,6 @@
 import { config } from '../../config';
 import type { ToolContext } from '../../types';
-import { argentinaNow, deliveryStatusLine, getStoreStatus } from '../hours';
+import { deliveryStatusLine, getStoreStatus, nowInTimezone, type Language, type Schedule } from '../hours';
 import { buildEsPrompt } from './es';
 import { buildEnPrompt } from './en';
 
@@ -49,7 +49,26 @@ export interface PromptParams {
   maxBubbles: number;
 }
 
-const TEMPLATES: Record<'es' | 'en', (p: PromptParams) => string> = {
+/**
+ * Everything buildSystemPrompt needs, already resolved by the runtime config
+ * service (server/src/config/runtime.ts) — agent.ts assembles this once per
+ * turn from businessProfile() + hoursConfig() + infoBlocks() +
+ * complianceRules() + woo() so this module stays a pure, synchronous formatter.
+ */
+export interface ResolvedPromptConfig {
+  businessName: string;
+  agentName: string;
+  language: Language;
+  discloseBot: boolean;
+  timezone: string;
+  hoursSchedule: Schedule;
+  /** Storefront URL to hand the customer (wc.front_url, falling back to wc.url). */
+  storefrontUrl: string;
+  infoBlocks: { payment: string; shipping: string; general: string };
+  complianceRules: string;
+}
+
+const TEMPLATES: Record<Language, (p: PromptParams) => string> = {
   es: buildEsPrompt,
   en: buildEnPrompt,
 };
@@ -57,18 +76,16 @@ const TEMPLATES: Record<'es' | 'en', (p: PromptParams) => string> = {
 /** Build the agent's system prompt for a given conversation. */
 export function buildSystemPrompt(
   ctx: ToolContext,
-  settings: Record<string, string> = {},
+  resolved: ResolvedPromptConfig,
   now: Date = new Date(),
 ): string {
-  const ar = argentinaNow(now);
-  const status = getStoreStatus(now);
-  // WC_FRONT_URL is optional — fall back to the REST domain when unset.
-  const storefrontUrl = config.WC_FRONT_URL || config.WC_URL;
+  const ar = nowInTimezone(now, resolved.timezone);
+  const status = getStoreStatus(now, resolved.hoursSchedule, resolved.timezone, resolved.language);
 
   const params: PromptParams = {
-    agentName: config.AGENT_NAME,
-    businessName: config.BUSINESS_NAME,
-    storefrontUrl,
+    agentName: resolved.agentName,
+    businessName: resolved.businessName,
+    storefrontUrl: resolved.storefrontUrl,
     customerName: safeName(ctx.customerName),
     now: {
       weekday: ar.weekday,
@@ -78,16 +95,17 @@ export function buildSystemPrompt(
       hour: ar.hour,
       minute: ar.minute,
     },
-    deliveryStatusLine: deliveryStatusLine(status),
+    deliveryStatusLine: deliveryStatusLine(status, resolved.language),
     infoBlocks: {
-      payment: (settings.medios_de_pago ?? '').trim(),
-      shipping: (settings.envios ?? '').trim(),
-      general: (settings.info_general ?? '').trim(),
+      payment: resolved.infoBlocks.payment.trim(),
+      shipping: resolved.infoBlocks.shipping.trim(),
+      general: resolved.infoBlocks.general.trim(),
     },
-    complianceRules: (settings.compliance_rules ?? '').trim(),
-    discloseBot: config.AGENT_DISCLOSE_BOT,
+    complianceRules: resolved.complianceRules.trim(),
+    discloseBot: resolved.discloseBot,
+    // Stays env-driven (not a runtime/dashboard setting) — see server/src/config.ts.
     maxBubbles: config.AGENT_MAX_BUBBLES,
   };
 
-  return TEMPLATES[config.AGENT_LANGUAGE](params);
+  return TEMPLATES[resolved.language](params);
 }

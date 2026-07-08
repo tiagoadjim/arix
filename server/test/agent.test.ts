@@ -4,8 +4,12 @@ import { vi, describe, it, expect, beforeEach } from 'vitest';
 const { create, runTool } = vi.hoisted(() => ({ create: vi.fn(), runTool: vi.fn() }));
 
 vi.mock('../src/agent/minimax', () => ({
-  minimax: { chat: { completions: { create } } },
-  MODEL: 'test-model',
+  getLlm: async () => ({
+    client: { chat: { completions: { create } } },
+    model: 'test-model',
+    reasoningSplit: false,
+    thinkingDisabled: false,
+  }),
   stripThinking: (t?: string | null) =>
     (t ?? '')
       .replace(/<think>[\s\S]*?<\/think>/gi, '')

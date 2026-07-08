@@ -1,4 +1,4 @@
-import { config } from '../config';
+import { woo as resolveWooConfig, settingsVersion } from '../config/runtime';
 import { logger } from '../logger';
 
 /**
@@ -7,8 +7,39 @@ import { logger } from '../logger';
  * Docs: https://woocommerce.github.io/woocommerce-rest-api-docs/
  */
 
-const BASE = `${config.WC_URL.replace(/\/$/, '')}/wp-json/wc/v3`;
-const AUTH = 'Basic ' + Buffer.from(`${config.WC_CONSUMER_KEY}:${config.WC_CONSUMER_SECRET}`).toString('base64');
+/** Raised when a WooCommerce call is attempted before the store is configured
+ * (no URL/consumer key/secret set yet — a fresh, not-yet-onboarded install). */
+export class WooNotConfiguredError extends Error {
+  constructor(message = 'WooCommerce is not configured yet — set the store URL and API keys in the dashboard.') {
+    super(message);
+    this.name = 'WooNotConfiguredError';
+  }
+}
+
+interface WooCreds {
+  base: string;
+  auth: string;
+  configured: boolean;
+}
+
+let credsCache: (WooCreds & { version: number }) | null = null;
+
+/** Resolve WooCommerce base URL + Basic-auth header from the runtime config
+ * service, memoized until a settings write calls runtime.invalidate(). */
+async function creds(): Promise<WooCreds> {
+  const version = settingsVersion();
+  if (credsCache && credsCache.version === version) return credsCache;
+
+  const w = await resolveWooConfig();
+  const resolved: WooCreds & { version: number } = {
+    version,
+    base: `${w.url.replace(/\/$/, '')}/wp-json/wc/v3`,
+    auth: 'Basic ' + Buffer.from(`${w.consumerKey}:${w.consumerSecret}`).toString('base64'),
+    configured: w.configured,
+  };
+  credsCache = resolved;
+  return resolved;
+}
 
 export interface WcCategory {
   id: number;
@@ -122,7 +153,10 @@ async function request<T>(
   path: string,
   opts: { method?: string; query?: Record<string, string | number | undefined>; body?: unknown } = {},
 ): Promise<{ data: T; headers: Headers }> {
-  const url = new URL(`${BASE}${path}`);
+  const { base, auth, configured } = await creds();
+  if (!configured) throw new WooNotConfiguredError();
+
+  const url = new URL(`${base}${path}`);
   for (const [k, v] of Object.entries(opts.query ?? {})) {
     if (v !== undefined && v !== '') url.searchParams.set(k, String(v));
   }
@@ -130,7 +164,7 @@ async function request<T>(
   const res = await fetch(url, {
     method: opts.method ?? 'GET',
     headers: {
-      Authorization: AUTH,
+      Authorization: auth,
       'Content-Type': 'application/json',
       Accept: 'application/json',
     },

@@ -17,7 +17,8 @@ export const STATUS_ES: Record<string, string> = {
 
 /** Default WhatsApp template sent to the customer when an order ships for delivery.
  *  Placeholders: {numero} {link} {codigo}. Editable from the dashboard (settings key
- *  `uber_envio_template`); this constant is the fallback when that setting is empty. */
+ *  `dispatch.template`, see config/runtime.ts's dispatchTemplate()); this constant
+ *  is the fallback when that setting is empty. */
 export const DEFAULT_DELIVERY_TEMPLATE = `🛵 ¡Tu pedido #{numero} ya salió para entrega!
 
 Seguí al repartidor en tiempo real acá:

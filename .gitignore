@@ -13,8 +13,9 @@ dist/
 build/
 .next/
 out/
+*.tsbuildinfo
 
-# baileys local auth (dev only — prod uses Supabase)
+# baileys local auth (dev only — prod persists the session in Postgres)
 auth_info_baileys/
 auth/
 
@@ -30,3 +31,6 @@ logs/
 
 # test
 coverage/
+
+# local receipt storage (dev)
+data/

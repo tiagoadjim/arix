@@ -1,5 +1,5 @@
-# Nico — Vapenic WhatsApp agent. Fully self-hosted: Postgres + server + dashboard.
-# Watch `docker compose logs -f server` to scan the WhatsApp QR on first run.
+# Arix — self-hosted AI sales agent for WooCommerce over WhatsApp.
+# Postgres + server + dashboard. First run: open http://localhost:3000 for the setup wizard.
 
 services:
   db:
@@ -25,7 +25,7 @@ services:
   server:
     build:
       context: ./server
-    image: nico-server
+    image: arix-server
     env_file: .env
     environment:
       # Override host-specific values for the Docker network.
@@ -55,7 +55,7 @@ services:
   dashboard:
     build:
       context: ./dashboard
-    image: nico-dashboard
+    image: arix-dashboard
     env_file: .env
     environment:
       # The dashboard proxies /api/* to the server over the Docker network.

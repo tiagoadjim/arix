@@ -1,18 +1,18 @@
 {
-  "name": "vapenic-nico",
+  "name": "arix",
   "version": "0.1.0",
   "private": true,
-  "description": "Nico — agente de IA de WhatsApp para Vapenic (Baileys + Minimax + WooCommerce + Supabase)",
+  "description": "Arix — open-source AI sales agent for WooCommerce over WhatsApp (Baileys + your LLM of choice + Postgres)",
   "type": "module",
   "engines": {
     "node": ">=20"
   },
   "scripts": {
-    "dev:server": "pnpm --filter @nico/server dev",
-    "dev:dashboard": "pnpm --filter @nico/dashboard dev",
-    "start:server": "pnpm --filter @nico/server start",
-    "typecheck": "pnpm --filter @nico/server typecheck && pnpm --filter @nico/dashboard typecheck",
-    "test": "pnpm --filter @nico/server test"
+    "dev:server": "pnpm --filter @arix/server dev",
+    "dev:dashboard": "pnpm --filter @arix/dashboard dev",
+    "start:server": "pnpm --filter @arix/server start",
+    "typecheck": "pnpm --filter @arix/server typecheck && pnpm --filter @arix/dashboard typecheck",
+    "test": "pnpm --filter @arix/server test"
   },
   "packageManager": "pnpm@10.30.0"
 }

@@ -1,171 +1,232 @@
-# Nico — agente de IA de WhatsApp para Vapenic
+<p align="center">
+  <img src="dashboard/public/logo.svg" alt="Arix" width="96" />
+</p>
 
-Nico atiende a los clientes de **Vapenic** por WhatsApp: asesora y vende
-(catálogo, sabores, stock en vivo desde WooCommerce), **ve** los comprobantes de
-transferencia y valida que el monto coincida con la orden, cambia el estado de la
-orden en WooCommerce cuando el pago es correcto, y **deriva a un humano** cuando
-hace falta. Los humanos toman el chat desde un **dashboard** web.
+<h1 align="center">Arix</h1>
 
-**100% self-hosted en tu VPS — sin servicios de terceros para datos.**
+<p align="center">
+  Open-source AI sales agent for WooCommerce, on WhatsApp.<br/>
+  Self-hosted, multi-LLM, ready in minutes.
+</p>
 
-- **WhatsApp**: [Baileys](https://github.com/WhiskeySockets/Baileys) (WhatsApp Web, no oficial).
-- **LLM**: [Minimax](https://platform.minimax.io) `MiniMax-M3` (visión + tool calling) vía API OpenAI-compatible.
-- **Tienda**: WooCommerce REST API v3.
-- **Datos**: **Postgres** (contenedor propio) · **comprobantes**: archivos en un volumen del VPS · **auth**: login propio (staff + bcrypt + cookie JWT).
+<p align="center">
+  <a href="https://github.com/tiagoadjim/arix/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/tiagoadjim/arix/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
+  <a href="CONTRIBUTING.md"><img alt="PRs Welcome" src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg"></a>
+</p>
 
-## Arquitectura
+<p align="center">
+  🇦🇷 <a href="docs/README.es.md">Leé esto en español</a>
+</p>
 
-El **`server` es el único backend**: dueño de Postgres, la API REST, el storage de
-comprobantes, la autenticación, Baileys y el harness de Nico. El **dashboard**
-(Next.js) no toca la base de datos: consume la API del `server` (Next reescribe
-`/api/*` → server, así todo es mismo-origen y sin CORS).
+Arix answers your customers on WhatsApp, sells from your live WooCommerce
+catalog, reads payment receipts, and keeps your orders up to date — with a
+human always one click away. Everything runs on infrastructure you own:
+Postgres, receipt files, and session data never leave your server.
 
-```
-WhatsApp ──Baileys──┐
-                    ▼
-        ┌─────────────────────┐   tools (function calling)   ┌──────────────┐
-        │      server/        │ ───────────────────────────▶ │  WooCommerce │
-        │     (Node/TS)       │  catálogo, orden, pago        └──────────────┘
-        │  Harness Nico (M3)  │ ───────────────────────────▶ ┌──────────────┐
-        │  Postgres (pg)      │       visión (comprobantes)   │  Minimax M3  │
-        │  Storage (archivos) │                               └──────────────┘
-        │  API REST + Auth    │
-        └─────────┬───────────┘
-                  │  /api/*  (proxy de Next, mismo-origen)
-                  ▼
-        ┌─────────────────────┐
-        │     dashboard/      │  inbox + toma de chat (polling cada 2-4s)
-        │     (Next.js)       │  login propio (cookie de sesión)
-        └─────────────────────┘
-                  ▲
-            Postgres ── docker volume (pgdata)   |   comprobantes ── docker volume (receipts)
-```
+## What it does
 
-## Estructura
+- **Sells from your live catalog** — stock, prices, and variants come straight
+  from the WooCommerce REST API, never from a script or a stale copy.
+- **Reads payment receipts** — a customer sends a photo or PDF of a transfer;
+  the agent reads the amount with vision and matches it against the order.
+- **Updates orders** — confirmed payments move the WooCommerce order to the
+  next status automatically, with a tolerance for small amount mismatches.
+- **Hands off to a human** — staff take over any conversation from the
+  dashboard inbox, reply from there, and hand it back to the agent.
+- **Knows your business hours** — replies are aware of your configured
+  schedule and timezone.
 
-```
-server/                 # Node/TS — único backend
-  src/
-    config.ts           # env (validado con zod)
-    index.ts            # migra DB + API + gateway
-    db/
-      schema.sql        # tablas (idempotente, se aplica al arrancar)
-      pool.ts           # pool pg + migrate()
-      repo.ts           # queries (conversaciones, mensajes, recibos, staff)
-    api/
-      server.ts         # API REST (auth, conversaciones, mensajes, media)
-      auth.ts           # sesión JWT (jose)
-    storage.ts          # comprobantes en disco (RECEIPTS_DIR)
-    whatsapp/           # auth-postgres, socket, media
-    agent/              # nico (harness), minimax, tools, prompt
-    skills/             # catalog, orders, payments, handoff  ← capacidades de Nico
-    handlers/messages.ts# enruta entrantes: bot vs humano, debounce, visión
-    scripts/create-staff.ts
-  test/                 # vitest (parseAmount, tolerancia, dispatch, harness, confirm_pago, resolve-order)
-dashboard/              # Next.js — consume la API del server (/api proxy)
-docker-compose.yml      # db (postgres) + server + dashboard
+<!-- Screenshots: dashboard inbox, conversation view, and setup wizard go here. -->
+
+## Architecture
+
+```mermaid
+flowchart LR
+    WA((WhatsApp)) <--> BAILEYS
+
+    subgraph SERVER["server (Node/TS)"]
+        BAILEYS[Baileys socket] <--> AGENT[Agent loop]
+        API[REST API + auth] <--> AGENT
+        API <--> PG[(Postgres)]
+    end
+
+    AGENT <--> LLM[LLM provider]
+    AGENT <--> WOO[WooCommerce REST]
+    DASH["dashboard (Next.js)"] -->|"same-origin proxy, /api/*"| API
 ```
 
-## Requisitos
+`server` is the only backend: it owns Postgres, the REST API, auth, receipt
+storage, and the WhatsApp socket. `dashboard` never touches the database — it
+proxies `/api/*` to `server` at the same origin, so there's no CORS to manage
+and no second set of credentials to configure.
 
-- Node 20+ (probado con Node 24), `pnpm`. Para deploy: Docker + Docker Compose.
-- API key de **Minimax** (suscripción de platform.minimax.io).
-- **WooCommerce**: Consumer Key/Secret con permisos **Read/Write**.
-- Un número de WhatsApp para Nico (lo vinculás escaneando un QR).
+## Supported AI providers
 
-## Puesta en marcha (Docker — recomendado)
+Pick one in the setup wizard (or set `LLM_PROVIDER` up front). All providers
+are used through the same OpenAI-compatible client — model and base URL are
+overridable per deployment.
 
-1. **Configurá `.env`**:
+| Provider | Default model | Tool calling | Vision (receipt reading) |
+|---|---|:---:|:---:|
+| OpenAI | `gpt-5.4-mini` | Yes | Yes |
+| Anthropic Claude | `claude-sonnet-5` | Yes | Yes |
+| Google Gemini | `gemini-3.5-flash` | Yes | Yes |
+| DeepSeek | `deepseek-v4-flash` | Yes | No |
+| MiniMax | `MiniMax-M3` | Yes | Yes |
+
+DeepSeek has no vision support today: instead of reading the receipt image,
+the agent asks the customer for the order number and amount in text, or hands
+off to a human — your choice, set per deployment.
+
+## Quickstart (Docker)
+
+Three steps, ending at the setup wizard — no manual config file editing beyond
+one secret.
+
+1. **Configure the minimum:**
+
    ```bash
-   cp .env.example .env
+   cp env.example .env
    ```
-   Completá: `MINIMAX_API_KEY`; `WC_URL` / `WC_CONSUMER_KEY` / `WC_CONSUMER_SECRET`;
-   `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB`; un `AUTH_JWT_SECRET` largo y
-   aleatorio. (En Docker, `DATABASE_URL`, `RECEIPTS_DIR` y `SERVER_API_URL` se
-   setean solos para la red interna.)
 
-2. **Levantá todo** (Postgres + server + dashboard). El schema se crea solo al arrancar:
+   Open `.env` and set `AUTH_JWT_SECRET` (generate one: `openssl rand -hex 32`)
+   plus a `POSTGRES_PASSWORD`. Everything else — LLM provider, WooCommerce
+   credentials, business profile — is configured from the dashboard next.
+
+2. **Start everything:**
+
    ```bash
    docker compose up -d --build
-   docker compose logs -f server     # escaneá el QR de WhatsApp la primera vez
    ```
 
-3. **Creá un usuario del dashboard** (staff):
-   ```bash
-   docker compose exec server pnpm create-staff vos@vapenic.com 'tu-password' 'Tu Nombre'
-   ```
+   Postgres, the server, and the dashboard all come up together; the schema
+   migrates itself on first boot.
 
-4. Entrá al dashboard en `http://TU_VPS:3000` y logueate. El QR de WhatsApp se
-   escanea desde los **logs** del server (`docker compose logs -f server`) o, ya
-   logueado, desde `/api/qr` (requiere sesión). El puerto del server no se expone
-   al host por seguridad (el QR es equivalente a una credencial).
+3. **Open `http://localhost:3000`.** You'll land on the setup wizard:
+   create an admin account, pick and test an AI provider, connect
+   WooCommerce, fill in your business profile, and scan the WhatsApp QR code
+   — right there in the browser, no log-scanning required. If a QR expires,
+   there's a regenerate button.
 
-> Datos y comprobantes persisten en los volúmenes `pgdata` y `receipts`. Backup =
-> `docker compose exec db pg_dump ...` + el volumen `receipts`.
+That's it — Arix is live. The break-glass CLI (`create-staff`, for when the
+wizard isn't reachable) is documented in [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
-## Desarrollo local (sin Docker)
+## Local development
 
-Necesitás un Postgres local. Apuntá `DATABASE_URL` a él (ej:
-`postgres://nico:nico@localhost:5432/nico`) y `SERVER_API_URL=http://localhost:3001`.
-Para que Nico lea comprobantes en **PDF** en local, instalá poppler
-(`brew install poppler` en macOS / `apt install poppler-utils` en Linux). En Docker
-ya viene incluido. Sin poppler, Nico simplemente pide una foto del comprobante.
+Requirements: Node 20+ (tested on Node 24), [pnpm](https://pnpm.io), and a
+Postgres instance (local or Docker).
 
 ```bash
-# server (terminal 1) — corre migraciones al arrancar e imprime el QR
-cd server && pnpm install && pnpm dev
-# crear staff (otra terminal, una vez)
-cd server && pnpm create-staff vos@vapenic.com 'tu-password' 'Tu Nombre'
-# dashboard (terminal 2)
-cd dashboard && pnpm install && pnpm dev   # http://localhost:3000
+pnpm install
+cp env.example .env              # fill in DATABASE_URL and AUTH_JWT_SECRET
+pnpm dev:server                  # terminal 1 — API + WhatsApp gateway
+pnpm dev:dashboard                # terminal 2 — http://localhost:3000
 ```
 
-## Cómo funciona
-
-- **Persona humana**: Nico responde como una persona real del equipo; nunca revela
-  que es un sistema automático. Responde en hasta **3 burbujas** cortas (más natural
-  que un bloque largo).
-- **Espera y contexto**: junta los mensajes del cliente **~60s** (`NICO_DEBOUNCE_MS`)
-  antes de responder, así lee varios mensajes seguidos juntos. Mantiene el historial
-  de la conversación y **no vuelve a saludar** si ya venían hablando.
-- **Modo de cada conversación**: `bot` (responde Nico) o `human`. Mientras es
-  `human`, Nico no responde.
-- **Comprobantes**: el cliente puede mandar **foto o PDF**. Si es PDF, el server
-  rasteriza la primera página a imagen para que Nico lo "vea". Se guarda en disco y
-  se muestra en el dashboard.
-- **Validación de pago**: Nico lee el monto y llama a `confirmar_pago`. El servidor
-  compara contra el total de la orden de forma determinística
-  (`PAYMENT_AMOUNT_TOLERANCE`) y solo confirma desde estados pre-pago (nunca reactiva
-  una orden reembolsada/cancelada). Si todo da bien, pasa la orden a `processing`.
-- **Identidad por teléfono o email**: si el teléfono del chat no coincide con la
-  orden, Nico **pide el email** de la compra y verifica con eso — solo deriva a un
-  humano si tampoco coincide (antes escalaba de más).
-- **Catálogo headless**: los links de producto que comparte apuntan al storefront
-  `WC_FRONT_URL` (ej. `https://shop.vapenic.com.ar/producto/<slug>`), no al WordPress.
-- **FAQs de envíos y pagos**: Nico responde "¿cuándo llega?", "¿cuál es el alias?",
-  etc. con la info cargada en **Configuración** (se inyecta en su contexto).
-- **Escalado a humano** (`derivar_a_humano`): solo si el cliente lo pide o algo está
-  fuera de alcance. La conversación pasa a `human`.
-- **Dashboard**: lista de conversaciones (filtro "Con humano"), historial, **Tomar
-  chat** (pausa a Nico) / **Devolver a Nico**, caja de respuesta (sale por WhatsApp al
-  instante vía el `server`), panel de comprobantes, y **Pedidos del cliente**
-  (items, fecha, estado, dirección) traídos de WooCommerce cuando hay identidad.
-  Una sección **⚙ Configuración** permite editar medios de pago, envíos e info
-  general que Nico usa para responder. Se actualiza por polling (2–4 s).
-
-## Tests
+To read PDF receipts locally (rasterized to an image for vision), install
+poppler: `brew install poppler` (macOS) or `apt install poppler-utils`
+(Linux). Docker already includes it. Without poppler, the agent simply asks
+for a photo instead of a PDF.
 
 ```bash
-cd server && pnpm test         # vitest: parseAmount, tolerancia, phone match, dispatch, harness, confirm_pago, resolve-order
-pnpm -w typecheck              # tsc en server y dashboard (desde la raíz)
+pnpm -w typecheck   # TypeScript, both packages
+pnpm test           # server test suite (vitest)
+pnpm lint           # eslint (non-blocking in CI)
 ```
 
-## Notas y riesgos
+## Configuration
 
-- **Baileys no es oficial**: WhatsApp puede banear la cuenta. No hagas mensajería
-  masiva. Si Nico recibe `forbidden`, el server **frena** los reintentos y avisa.
-- **+18**: Vapenic vende productos con nicotina. Nico no vende a menores.
-- **Secretos**: `MINIMAX_API_KEY`, `WC_*`, `POSTGRES_PASSWORD` y `AUTH_JWT_SECRET`
-  solo en el `.env` del VPS. Servir el dashboard detrás de HTTPS (y poner
-  `secure: true` en la cookie) para producción.
-- Cancelaciones/reembolsos los maneja un humano (Nico no los ejecuta).
+Almost everything — LLM provider and key, WooCommerce credentials, business
+profile, agent persona, payment/shipping info — lives encrypted in Postgres
+and is edited from the dashboard's Settings page (or the first-run wizard).
+Secrets are encrypted at rest (AES-256-GCM, key derived from
+`AUTH_JWT_SECRET`) and are never sent to the browser in plaintext.
+
+Any of those fields can also be **seeded from an environment variable** (see
+`env.example`, section 2). Precedence is **env > database > default**: while
+an env var is set, it wins and shows as read-only in the dashboard — useful
+for infra-managed deployments that don't want secrets touched through the UI.
+
+Only a handful of variables are env-only (no dashboard equivalent):
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `AUTH_JWT_SECRET` | — (required) | Session signing + settings-encryption root. Rotating it logs everyone out and invalidates stored secrets. |
+| `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | `arix` / — / `arix` | Docker Compose's Postgres container + the server's connection string. |
+| `DATABASE_URL` | — | Local dev only — points the server at your own Postgres (Compose sets this internally). |
+| `PORT` | `3001` | Server API port (not published to the host in Docker). |
+| `RECEIPTS_DIR` | `./data/receipts` | Where receipt images are stored (a volume in Docker). |
+| `LOG_LEVEL` | `info` | pino log level. |
+| `COOKIE_SECURE` | `false` | Set `true` when serving the dashboard over HTTPS (see the VPS guide). |
+| `WA_ACCOUNT_ID` | `default` | Namespaces the WhatsApp session stored in Postgres. |
+| `WA_MARK_ONLINE` | `false` | Whether WhatsApp shows the account as online. |
+| `AGENT_HISTORY_LIMIT` | `30` | Messages of conversation history kept per reply. |
+| `AGENT_DEBOUNCE_MS` | `60000` | Wait after the customer's last message before replying (batches quick follow-ups). |
+| `AGENT_MAX_BUBBLES` | `3` | Max WhatsApp bubbles per reply. |
+
+## Deploying to a VPS
+
+See [`docs/deploy-vps.md`](docs/deploy-vps.md) for a concise walkthrough:
+Caddy as a reverse proxy with automatic HTTPS, setting `COOKIE_SECURE=true`,
+backups, and zero-downtime updates.
+
+## How it works
+
+- **Debounce batching** — the agent waits `AGENT_DEBOUNCE_MS` (default 60s)
+  after the customer's last message before replying, so a burst of quick
+  messages gets read and answered together instead of one reply per message.
+- **Grounding lock** — the agent is never allowed to state a price or stock
+  level from memory: product questions force a live `search_catalog` call
+  first, so it can't invent numbers.
+- **Deterministic payment validation** — the amount read from a receipt is
+  compared against the order total in code (with a configurable tolerance),
+  and a payment can only confirm an order that's still in a pre-payment
+  status — a refunded or cancelled order can never be silently reactivated.
+- **Versioned migrations** — schema changes ship as numbered SQL files in
+  `server/src/db/migrations/`, applied once each and tracked in a
+  `schema_migrations` table. Safe to run on every boot.
+
+## Security & privacy
+
+- Everything self-hosts on your own infrastructure: Postgres, receipt files,
+  and WhatsApp session data live in your Docker volumes, not a third party.
+- API keys and WooCommerce credentials are encrypted at rest
+  (AES-256-GCM) and are never returned to the browser in plaintext.
+- Auth is a signed JWT cookie over your own staff table (bcrypt-hashed
+  passwords) — no external identity provider required.
+- Set `COOKIE_SECURE=true` and serve the dashboard over HTTPS in production
+  (see the VPS guide).
+- The only data that leaves your infrastructure is what's necessary for the
+  product to work: messages/receipts to your chosen LLM provider, and order
+  reads/writes to your WooCommerce store.
+
+### Disclaimer
+
+Arix connects to WhatsApp through [Baileys](https://github.com/WhiskeySockets/Baileys),
+an **unofficial** WhatsApp Web client — not something Meta provides or
+endorses. Using it carries a real risk of the connected number being banned.
+Don't use Arix for bulk/marketing messaging or anything that looks like spam;
+it's built for answering inbound customer conversations, not outbound blasts.
+
+## Roadmap
+
+Planned, no committed dates:
+
+- Shopify support
+- Tiendanube support
+- More dashboard languages
+- Realtime (SSE) inbox, replacing polling
+- Usage/cost analytics panel
+- Additional messaging channels (evaluating)
+
+## Contributing
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the dev setup, test commands, and
+PR expectations.
+
+## License & credits
+
+MIT — see [`LICENSE`](LICENSE).
+
+Developed by [tiagoadjim](https://github.com/tiagoadjim).

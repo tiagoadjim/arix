@@ -75,4 +75,8 @@ export const enGuardrails: Guardrails = {
   placeholderForMedia,
   imageAttachedPrefix: '[image attached] ',
   receiptCaption: "Here's the transfer receipt.",
+  visionUnsupportedAskDetails:
+    "IMPORTANT: you can't see the image the customer sent (this AI provider has no vision support). Ask them in text for their order number and the amount they paid so you can confirm it yourself.",
+  visionUnsupportedHandoff:
+    "IMPORTANT: you can't see the image the customer sent (this AI provider has no vision support). Call handoff_to_human so a teammate can review the receipt.",
 };

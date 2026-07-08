@@ -6,8 +6,9 @@ import { logger } from './logger';
 
 /**
  * Render the first page of a PDF to a PNG buffer using poppler's `pdftoppm`.
- * Many customers send transfer receipts as PDFs; Minimax vision only reads
- * images, so we rasterize page 1. Returns null if poppler isn't available.
+ * Many customers send transfer receipts as PDFs; every vision-capable LLM
+ * provider's chat-completions image_url only reads images, so we rasterize
+ * page 1. Returns null if poppler isn't available.
  */
 export async function pdfFirstPageToPng(pdf: Buffer): Promise<Buffer | null> {
   let dir: string | null = null;

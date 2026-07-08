@@ -1,9 +1,16 @@
 import type OpenAI from 'openai';
-import { getLlm, stripThinking } from './minimax';
+import { getLlm, LlmRequestError, type LlmHandle } from './llm/client';
 import { buildSystemPrompt } from './prompt';
 import { toolDefinitions, runTool } from './tools';
 import { getGuardrails, type Guardrails } from './guardrails';
-import { businessProfile, complianceRules, hoursConfig, infoBlocks, woo } from '../config/runtime';
+import {
+  businessProfile,
+  complianceRules,
+  hoursConfig,
+  infoBlocks,
+  woo,
+  llm as resolveLlmSettings,
+} from '../config/runtime';
 import { logger } from '../logger';
 import type { Message, ToolContext } from '../types';
 
@@ -11,8 +18,20 @@ type ChatMessage = OpenAI.Chat.Completions.ChatCompletionMessageParam;
 
 const MAX_STEPS = 6;
 
+/** Whether the configured provider/model can see images, and what to do
+ * instead when it can't (mirrors llm.vision_fallback). */
+interface VisionOptions {
+  supported: boolean;
+  fallback: 'ask_details' | 'handoff';
+}
+
 /** Map persisted conversation history into OpenAI chat messages. */
-function historyToMessages(history: Message[], ctx: ToolContext, guardrails: Guardrails): ChatMessage[] {
+function historyToMessages(
+  history: Message[],
+  ctx: ToolContext,
+  guardrails: Guardrails,
+  vision: VisionOptions,
+): ChatMessage[] {
   const out: ChatMessage[] = [];
   history.forEach((m, idx) => {
     const isLast = idx === history.length - 1;
@@ -20,22 +39,40 @@ function historyToMessages(history: Message[], ctx: ToolContext, guardrails: Gua
 
     if (m.direction === 'in') {
       // Customer turn. Attach the image only for the latest turn (we keep the
-      // base64 in ctx.lastImage for the current message).
+      // base64 in ctx.lastImage for the current message) — and only when the
+      // configured provider/model can actually see it.
       if (isLast && ctx.lastImage) {
         const text = m.body?.trim() || guardrails.receiptCaption;
-        out.push({
-          role: 'user',
-          content: [
-            { type: 'text', text },
-            {
-              type: 'image_url',
-              image_url: {
-                url: `data:${ctx.lastImage.mime};base64,${ctx.lastImage.base64}`,
-                detail: 'high',
+        if (vision.supported) {
+          out.push({
+            role: 'user',
+            content: [
+              { type: 'text', text },
+              {
+                type: 'image_url',
+                image_url: {
+                  url: `data:${ctx.lastImage.mime};base64,${ctx.lastImage.base64}`,
+                  detail: 'high',
+                },
               },
-            },
-          ],
-        });
+            ],
+          });
+        } else {
+          // No vision support: send the customer's text as-is (a real
+          // message, kept clean), then a system note steering the model to
+          // ask for the order number + amount paid, or hand off — per
+          // llm.vision_fallback. The image itself is still stored/shown
+          // elsewhere in the pipeline (receipts/orders flow) — only the LLM
+          // request loses the bytes.
+          out.push({ role: 'user', content: text });
+          out.push({
+            role: 'system',
+            content:
+              vision.fallback === 'handoff'
+                ? guardrails.visionUnsupportedHandoff
+                : guardrails.visionUnsupportedAskDetails,
+          });
+        }
       } else {
         const body = (m.body ?? '').trim();
         // Never emit empty content: an empty user turn makes the model hallucinate /
@@ -53,8 +90,11 @@ function historyToMessages(history: Message[], ctx: ToolContext, guardrails: Gua
   return out;
 }
 
-function finalText(content: OpenAI.Chat.Completions.ChatCompletionMessage['content']): string {
-  return stripThinking(typeof content === 'string' ? content : '');
+function finalText(
+  handle: LlmHandle,
+  content: OpenAI.Chat.Completions.ChatCompletionMessage['content'],
+): string {
+  return handle.postprocess(typeof content === 'string' ? content : '');
 }
 
 /**
@@ -68,15 +108,20 @@ function finalText(content: OpenAI.Chat.Completions.ChatCompletionMessage['conte
 export async function runAgent(ctx: ToolContext, history: Message[]): Promise<string> {
   // Resolve everything the turn needs from the runtime config service once,
   // up front — memoized internally, so this is cheap after the first turn.
-  const [profile, schedule, blocks, rules, wooCfg, llmCfg] = await Promise.all([
+  const [profile, schedule, blocks, rules, wooCfg, handle, llmSettings] = await Promise.all([
     businessProfile(),
     hoursConfig(),
     infoBlocks(),
     complianceRules(),
     woo(),
     getLlm(),
+    resolveLlmSettings(),
   ]);
   const guardrails = getGuardrails(profile.language);
+  const vision: VisionOptions = {
+    supported: handle.provider.supportsVision(handle.model),
+    fallback: llmSettings.visionFallback,
+  };
 
   const messages: ChatMessage[] = [
     {
@@ -94,7 +139,7 @@ export async function runAgent(ctx: ToolContext, history: Message[]): Promise<st
         complianceRules: rules,
       }),
     },
-    ...historyToMessages(history, ctx, guardrails),
+    ...historyToMessages(history, ctx, guardrails, vision),
   ];
   let retried = false; // allow one corrective retry if the reply looks garbled
   // Grounding lock: never let a product/price/stock fact reach the customer
@@ -106,37 +151,64 @@ export async function runAgent(ctx: ToolContext, history: Message[]): Promise<st
     [...history].reverse().find((m) => m.direction === 'in')?.body?.trim() ?? '';
 
   for (let step = 0; step < MAX_STEPS; step += 1) {
-    // Intersect with an index signature so we can attach MiniMax-only fields
-    // (reasoning_split / thinking) that the OpenAI types don't know about; the
-    // SDK forwards unknown body keys verbatim.
+    // Intersect with an index signature so providers can attach extra,
+    // provider-specific request fields that the OpenAI types don't know
+    // about (see llm/providers.ts::prepareBody); the SDK forwards unknown
+    // body keys verbatim.
     const body: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming &
       Record<string, unknown> = {
-      model: llmCfg.model,
+      model: handle.model,
       messages,
       tools: toolDefinitions,
       temperature: 0.4,
-      // Generous budget: M3 is a thinking model. With reasoning_split the visible
-      // answer is shorter, but keep headroom so it isn't truncated (handled below).
+      // Generous budget: thinking models need headroom so the answer isn't
+      // truncated (handled below).
       max_tokens: 4096,
     };
     // Keep the model's thinking OUT of `content` (it goes to separate
     // reasoning_content/reasoning_details fields) so it can never leak to the
-    // customer. thinkingDisabled is an optional hard-off switch.
-    if (llmCfg.reasoningSplit) body.reasoning_split = true;
-    if (llmCfg.thinkingDisabled) body.thinking = { type: 'disabled' };
-    // Grounding lock forced a catalog lookup this round: make the model call it.
+    // customer. Provider-specific request-shaping quirks live in the
+    // provider registry (llm/providers.ts), not here.
+    handle.provider.prepareBody(body, {
+      reasoningSplit: llmSettings.reasoningSplit,
+      thinkingDisabled: llmSettings.thinkingDisabled,
+    });
+    // Grounding lock forced a catalog lookup this round: make the model call it —
+    // but only if the provider actually honors a forced function choice. Some
+    // compat layers don't (see agent/llm/providers.ts); those rely on the
+    // system-message nudge (forceCatalogNudge) alone.
     if (forceCatalogNext) {
-      body.tool_choice = { type: 'function', function: { name: 'search_catalog' } };
+      if (handle.provider.supportsForcedToolChoice) {
+        body.tool_choice = { type: 'function', function: { name: 'search_catalog' } };
+      }
       forceCatalogNext = false; // one-shot
     }
-    const resp = await llmCfg.client.chat.completions.create(body);
+
+    let resp: OpenAI.Chat.Completions.ChatCompletion;
+    try {
+      resp = await handle.chatComplete(body);
+    } catch (err) {
+      // chatComplete() already retried internally (see llm/client.ts) — by
+      // the time an error reaches here, further retries won't help. Fail
+      // soft: the customer gets a friendly fallback instead of silence
+      // (previously an unhandled throw from .create() would propagate all
+      // the way up and the customer got nothing).
+      if (err instanceof LlmRequestError) {
+        logger.error(
+          { err, conversationId: ctx.conversationId, retryable: err.retryable, status: err.status },
+          'llm request failed — returning the safe fallback',
+        );
+        return guardrails.fallback;
+      }
+      throw err;
+    }
 
     const choice = resp.choices[0];
     if (!choice) return guardrails.fallback;
     const msg = choice.message;
 
     // Preserve the FULL assistant message (incl. any reasoning) in history —
-    // required for M3's interleaved thinking across tool calls.
+    // required for providers with interleaved thinking across tool calls.
     messages.push(msg as unknown as ChatMessage);
 
     const toolCalls = msg.tool_calls ?? [];
@@ -147,7 +219,7 @@ export async function runAgent(ctx: ToolContext, history: Message[]): Promise<st
         logger.warn({ conversationId: ctx.conversationId }, 'agent reply truncated (max_tokens)');
         return guardrails.fallback;
       }
-      const text = finalText(msg.content);
+      const text = finalText(handle, msg.content);
       // Backstop for a reply that's in the wrong language / leaked reasoning:
       // retry once with a firm reminder, and if it's still garbled send the
       // safe fallback rather than gibberish.

@@ -11,7 +11,7 @@ const SPECS: ToolSpec[] = [...catalogTools, ...orderTools, ...paymentTools, ...h
 
 const byName = new Map<string, ToolSpec>(SPECS.map((s) => [s.definition.function.name, s]));
 
-/** Tool definitions advertised to Minimax on every completion request. */
+/** Tool definitions advertised to the configured LLM provider on every completion request. */
 export const toolDefinitions: OpenAI.Chat.Completions.ChatCompletionTool[] = SPECS.map(
   (s) => s.definition,
 );

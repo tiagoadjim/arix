@@ -38,7 +38,8 @@ export async function downloadMedia(
   }
 }
 
-/** Minimax M3 vision accepts these image formats. */
+/** Raster image formats accepted as a vision content part by every
+ * vision-capable provider in the registry (see agent/llm/providers.ts). */
 const VISION_MIMES = new Set(['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp']);
 
 export function isVisionImage(mime: string): boolean {

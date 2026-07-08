@@ -36,6 +36,15 @@ export interface Guardrails {
   imageAttachedPrefix: string;
   /** Default caption used when a receipt image arrives with no text. */
   receiptCaption: string;
+  /** System note injected (not shown verbatim) when the customer sent an
+   * image but the configured provider/model has no vision support and
+   * `llm.vision_fallback` is 'ask_details': steer the model to ask, in text,
+   * for the order number and the amount paid. */
+  visionUnsupportedAskDetails: string;
+  /** Same trigger as visionUnsupportedAskDetails, but for
+   * `llm.vision_fallback === 'handoff'`: steer the model to call
+   * handoff_to_human instead of asking follow-up questions itself. */
+  visionUnsupportedHandoff: string;
 }
 
 const REGISTRY = {

@@ -75,4 +75,8 @@ export const esGuardrails: Guardrails = {
   placeholderForMedia,
   imageAttachedPrefix: '[imagen adjunta] ',
   receiptCaption: 'Te mando el comprobante de la transferencia.',
+  visionUnsupportedAskDetails:
+    'IMPORTANTE: no podés ver la imagen que te mandó el cliente (este proveedor de IA no soporta visión). Pedile en texto el número de pedido y el monto que pagó para poder confirmarlo vos mismo.',
+  visionUnsupportedHandoff:
+    'IMPORTANTE: no podés ver la imagen que te mandó el cliente (este proveedor de IA no soporta visión). Llamá a handoff_to_human para que una persona del equipo revise el comprobante.',
 };

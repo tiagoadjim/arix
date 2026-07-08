@@ -1,17 +1,42 @@
 import { woo } from '../integrations/woocommerce';
 import { woo as wooConfig } from '../config/runtime';
-import { insertReceipt, setConversationEmail } from '../db/repo';
+import { insertReceipt } from '../db/repo';
 import { logger } from '../logger';
-import { STATUS_ES, checkIdentity } from './orders';
+import { STATUS_ES, checkIdentity, persistVerifiedEmail } from './orders';
 import type { ToolSpec } from '../agent/tool-spec';
 import type { ReceiptMatchStatus, ToolContext } from '../types';
+
+/** Which character a currency conventionally uses as the DECIMAL separator —
+ * 'comma' for ARS/EUR-style formatting ("1.234,56"), 'dot' for USD-style
+ * ("1,234.56"). Only ever consulted to break a genuine tie (see parseAmount). */
+export type DecimalSeparatorHint = 'comma' | 'dot';
+
+// Currencies that conventionally write the decimal separator as ',' (and use
+// '.' for thousands) — the reverse of USD-style formatting. Extend as needed;
+// this only affects the ambiguous 3-trailing-digit case in parseAmount.
+const COMMA_DECIMAL_CURRENCIES = new Set(['ARS', 'EUR', 'BRL', 'CLP', 'UYU', 'PYG', 'COP']);
+
+/** Decimal-separator hint for a store's currency (e.g. wc.currency). */
+export function decimalHintForCurrency(currency: string): DecimalSeparatorHint {
+  return COMMA_DECIMAL_CURRENCIES.has(currency.trim().toUpperCase()) ? 'comma' : 'dot';
+}
 
 /**
  * Normalize an amount that may arrive as a number or a localized string
  * ("1.234,56", "1,234.56", "$ 1234"). Returns a float or null.
- * Pure + exported for unit testing.
+ *
+ * `decimalHint` only breaks the tie for a genuinely ambiguous input: a LONE
+ * separator (dot or comma, not both) followed by exactly 3 digits, e.g.
+ * "1.234" — is that thousands-grouped 1234, or a literal 1.234? Every other
+ * shape (2 trailing digits, both separators present, etc.) is unambiguous
+ * already and completely unaffected by the hint. Omitting the hint keeps the
+ * pre-existing (AR-leaning) behavior exactly as before. Pure + exported for
+ * unit testing.
  */
-export function parseAmount(input: number | string | null | undefined): number | null {
+export function parseAmount(
+  input: number | string | null | undefined,
+  decimalHint?: DecimalSeparatorHint,
+): number | null {
   if (input == null) return null;
   if (typeof input === 'number') return Number.isFinite(input) ? input : null;
 
@@ -27,10 +52,22 @@ export function parseAmount(input: number | string | null | undefined): number |
     s = s.split(thouSep).join('').replace(decSep, '.');
   } else if (hasComma) {
     const parts = s.split(',');
-    s = parts.length === 2 && (parts[1]?.length ?? 0) <= 2 ? `${parts[0]}.${parts[1]}` : parts.join('');
+    const ambiguous = parts.length === 2 && (parts[1]?.length ?? 0) === 3;
+    s =
+      ambiguous && decimalHint === 'comma'
+        ? `${parts[0]}.${parts[1]}`
+        : parts.length === 2 && (parts[1]?.length ?? 0) <= 2
+          ? `${parts[0]}.${parts[1]}`
+          : parts.join('');
   } else if (hasDot) {
     const parts = s.split('.');
-    s = parts.length === 2 && (parts[1]?.length ?? 0) <= 2 ? `${parts[0]}.${parts[1]}` : parts.join('');
+    const ambiguous = parts.length === 2 && (parts[1]?.length ?? 0) === 3;
+    s =
+      ambiguous && decimalHint === 'dot'
+        ? `${parts[0]}.${parts[1]}`
+        : parts.length === 2 && (parts[1]?.length ?? 0) <= 2
+          ? `${parts[0]}.${parts[1]}`
+          : parts.join('');
   }
 
   const n = Number(s);
@@ -72,15 +109,18 @@ export const paymentTools: ToolSpec[] = [
     handler: async (args, ctx: ToolContext) => {
       const orderNumber = String(args.order_number ?? '').trim();
       const email = String(args.email ?? '').trim();
-      const receiptAmount = parseAmount(args.receipt_amount as number | string);
+      // Resolved up front (it never depended on the order) so the same
+      // currency-derived decimal hint applies to both amounts parsed below.
+      const wc = await wooConfig();
+      const decimalHint = decimalHintForCurrency(wc.currency);
+      const receiptAmount = parseAmount(args.receipt_amount as number | string, decimalHint);
       if (!orderNumber) return { ok: false, motivo: 'falta_numero_orden' };
       if (receiptAmount == null || receiptAmount <= 0) return { ok: false, motivo: 'monto_invalido' };
 
       const order = await woo.resolveOrderByNumber(orderNumber);
       if (!order) return { ok: false, motivo: 'orden_no_encontrada', numero: orderNumber };
 
-      const wc = await wooConfig();
-      const total = parseAmount(order.total);
+      const total = parseAmount(order.total, decimalHint);
       const mediaUrl = ctx.lastImage?.mediaUrl ?? null;
       const messageId = ctx.lastImage?.messageId ?? null;
 
@@ -111,11 +151,7 @@ export const paymentTools: ToolSpec[] = [
         );
         return { ok: false, motivo: id.emailProvided ? 'identidad_no_verificable' : 'pedir_email' };
       }
-      if (id.byEmail && email) {
-        await setConversationEmail(ctx.conversationId, email.trim().toLowerCase()).catch((err) =>
-          logger.warn({ err }, 'failed to store customer email'),
-        );
-      }
+      await persistVerifiedEmail(ctx, id, email);
 
       // Idempotency: never "re-confirm" an order already paid/being prepared.
       if (order.status === 'processing' || order.status === 'completed') {

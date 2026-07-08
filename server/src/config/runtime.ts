@@ -200,6 +200,9 @@ export interface WooSettings {
   currency: string;
   statusAfterPayment: string;
   statusAfterDispatch: string;
+  /** Fallback template for a product's page URL, only used when the Woo API
+   * response has no usable `permalink` — see skills/catalog.ts's productLink(). */
+  productLinkTemplate: string;
   tolerance: number;
   /** True once url + consumer key + consumer secret are all set. */
   configured: boolean;
@@ -218,6 +221,7 @@ export async function woo(): Promise<WooSettings> {
     currency: valueOf<string>(meta, 'wc.currency'),
     statusAfterPayment: valueOf<string>(meta, 'wc.status_after_payment'),
     statusAfterDispatch: valueOf<string>(meta, 'wc.status_after_dispatch'),
+    productLinkTemplate: valueOf<string>(meta, 'wc.product_link_template'),
     tolerance: valueOf<number>(meta, 'payment.tolerance'),
     configured: Boolean(url.trim() && consumerKey.trim() && consumerSecret.trim()),
   };

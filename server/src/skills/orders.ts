@@ -58,6 +58,24 @@ export function checkIdentity(
   return { verified: phoneMatch || emailMatch, emailProvided: Boolean(e), byEmail: emailMatch };
 }
 
+/**
+ * Persist the customer's email once identity was verified BY email (not by
+ * phone) — lets the dashboard list this customer's orders later. Shared
+ * between find_order (below) and confirm_payment (skills/payments.ts), which
+ * both used to duplicate this exact side effect. Best-effort: a failure to
+ * store the email never fails the tool call itself.
+ */
+export async function persistVerifiedEmail(
+  ctx: ToolContext,
+  identity: { byEmail: boolean },
+  email: string,
+): Promise<void> {
+  if (!identity.byEmail || !email) return;
+  await setConversationEmail(ctx.conversationId, email.trim().toLowerCase()).catch((err) =>
+    logger.warn({ err }, 'failed to store customer email'),
+  );
+}
+
 const STATUS_LABEL = (s: string) => STATUS_ES[s] ?? s;
 
 /** Detailed order view for the staff dashboard (items + shipping address). */
@@ -160,11 +178,7 @@ export const orderTools: ToolSpec[] = [
         };
       }
       // Remember the verified email so the dashboard can list this customer's orders.
-      if (id.byEmail && email) {
-        await setConversationEmail(ctx.conversationId, email.trim().toLowerCase()).catch((err) =>
-          logger.warn({ err }, 'failed to store customer email'),
-        );
-      }
+      await persistVerifiedEmail(ctx, id, email);
       return orderSummary(order, ctx);
     },
   },

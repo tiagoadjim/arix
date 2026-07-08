@@ -42,6 +42,35 @@ describe('parseAmount', () => {
   });
 });
 
+describe('parseAmount with a currency decimal-separator hint', () => {
+  it('treats a lone dot with 3 trailing digits as a decimal when the hint says dot-is-decimal (USD)', () => {
+    expect(parseAmount('1.234', 'dot')).toBe(1.234);
+  });
+
+  it('still treats a lone dot with 3 trailing digits as thousands when the hint says comma-is-decimal (ARS)', () => {
+    expect(parseAmount('1.234', 'comma')).toBe(1234);
+  });
+
+  it('treats a lone comma with 3 trailing digits as a decimal when the hint says comma-is-decimal (ARS/EUR)', () => {
+    expect(parseAmount('1,234', 'comma')).toBe(1.234);
+  });
+
+  it('still treats a lone comma with 3 trailing digits as thousands when the hint says dot-is-decimal (USD)', () => {
+    expect(parseAmount('1,234', 'dot')).toBe(1234);
+  });
+
+  it('does not change unambiguous inputs regardless of the hint', () => {
+    expect(parseAmount('15.400,50', 'comma')).toBe(15400.5);
+    expect(parseAmount('15,400.50', 'dot')).toBe(15400.5);
+    expect(parseAmount('12,50', 'dot')).toBe(12.5);
+  });
+
+  it('behaves exactly as before when no hint is passed', () => {
+    expect(parseAmount('1.234')).toBe(1234);
+    expect(parseAmount('1,234')).toBe(1234);
+  });
+});
+
 describe('amountsMatch', () => {
   it('matches exact amounts', () => {
     expect(amountsMatch(15400, 15400, 1)).toBe(true);

@@ -158,6 +158,16 @@ export const SETTINGS_SCHEMA: readonly SettingDefinition[] = [
     label: 'Order status set once staff dispatches an order',
   },
   {
+    key: 'wc.product_link_template',
+    group: 'wc',
+    type: 'string',
+    // Fallback ONLY for when a product's own `permalink` is missing from the
+    // Woo API response (see skills/catalog.ts's productLink()). Supports
+    // {base} (wc.front_url, falling back to wc.url) and {slug} placeholders.
+    default: '{base}/producto/{slug}',
+    label: 'Product page URL template — fallback when the API permalink is missing ({base}, {slug})',
+  },
+  {
     key: 'payment.tolerance',
     group: 'payment',
     type: 'number',

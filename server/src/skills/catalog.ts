@@ -1,5 +1,5 @@
 import { woo, type WcProduct, type WcVariation } from '../integrations/woocommerce';
-import { woo as wooConfig } from '../config/runtime';
+import { woo as wooConfig, type WooSettings } from '../config/runtime';
 import { logger } from '../logger';
 import type { ToolSpec } from '../agent/tool-spec';
 
@@ -14,14 +14,39 @@ function flavorsOf(product: WcProduct): string[] {
   return attr?.options ?? [];
 }
 
-// Headless: the storefront is wc.front_url, NOT the WordPress/REST domain.
-// wc.front_url is optional — fall back to wc.url when it isn't configured (a
-// later phase switches this to the product's own `permalink` from the API).
-// Product page = <front>/producto/<slug>. `frontBase` is resolved once per
-// handler call (see wooConfig() below) and passed in to avoid re-resolving it
-// per product in a search result loop.
-function productLink(product: WcProduct, frontBase: string): string {
-  return `${frontBase}/producto/${product.slug}`;
+type ProductLinkConfig = Pick<WooSettings, 'url' | 'frontUrl' | 'productLinkTemplate'>;
+
+/** Rewrite `permalink`'s origin (scheme + host) to `frontUrl`'s, keeping the
+ * path — for headless setups where the WordPress/REST domain differs from
+ * the public storefront. Returns the permalink unchanged if frontUrl is
+ * unset or either URL fails to parse (never throws on bad config data). */
+function rewriteOrigin(permalink: string, frontUrl: string): string {
+  if (!frontUrl.trim()) return permalink;
+  try {
+    const url = new URL(permalink);
+    const front = new URL(frontUrl);
+    url.protocol = front.protocol;
+    url.host = front.host;
+    return url.toString();
+  } catch {
+    return permalink;
+  }
+}
+
+/**
+ * Product page URL. Prefers the product's own `permalink` from the Woo API
+ * (rewritten onto the storefront origin when wc.front_url is set, for
+ * headless setups where the REST domain differs from the public site).
+ * Falls back to wc.product_link_template (default `{base}/producto/{slug}`)
+ * only when the API gave no usable permalink — e.g. a malformed response
+ * degraded by integrations/woocommerce.ts's sanitizeProduct().
+ */
+export function productLink(product: Pick<WcProduct, 'permalink' | 'slug'>, wc: ProductLinkConfig): string {
+  const permalink = (product.permalink ?? '').trim();
+  if (permalink) return rewriteOrigin(permalink, wc.frontUrl);
+
+  const base = (wc.frontUrl || wc.url).replace(/\/$/, '');
+  return wc.productLinkTemplate.replace('{base}', base).replace('{slug}', product.slug);
 }
 
 function variationSummary(v: WcVariation) {
@@ -69,7 +94,6 @@ export const catalogTools: ToolSpec[] = [
         }),
         wooConfig(),
       ]);
-      const frontBase = (wc.frontUrl || wc.url).replace(/\/$/, '');
 
       // Enrich the first few variable products with their flavor variations.
       const out = [];
@@ -83,7 +107,7 @@ export const catalogTools: ToolSpec[] = [
           stock: STOCK_ES[p.stock_status] ?? p.stock_status,
           categorias: p.categories?.map((c) => c.name) ?? [],
           sabores: flavorsOf(p),
-          link: productLink(p, frontBase),
+          link: productLink(p, wc),
           variaciones: undefined as unknown,
         };
         if (p.type === 'variable' && p.variations?.length && enriched < 5) {
@@ -122,7 +146,6 @@ export const catalogTools: ToolSpec[] = [
       const id = Number(args.product_id);
       if (!Number.isFinite(id)) return { error: 'product_id inválido' };
       const [p, wc] = await Promise.all([woo.getProduct(id), wooConfig()]);
-      const frontBase = (wc.frontUrl || wc.url).replace(/\/$/, '');
       let variaciones: unknown = undefined;
       if (p.type === 'variable' && p.variations?.length) {
         try {
@@ -140,7 +163,7 @@ export const catalogTools: ToolSpec[] = [
         descripcion: (p.short_description ?? '').replace(/<[^>]+>/g, '').trim() || null,
         sabores: flavorsOf(p),
         variaciones,
-        link: productLink(p, frontBase),
+        link: productLink(p, wc),
       };
     },
   },

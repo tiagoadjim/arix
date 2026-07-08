@@ -149,6 +149,70 @@ export class WooError extends Error {
   }
 }
 
+const KNOWN_STOCK_STATUSES = new Set<string>(['instock', 'outofstock', 'onbackorder']);
+
+/**
+ * Light boundary validation for the WooCommerce fields the bot actually
+ * consumes (see the fields listed below) — NOT a full schema validator (no
+ * zod here, deliberately). A malformed/missing field never throws mid-turn:
+ * it's logged and degraded to a safe value, chosen so downstream code (which
+ * already has to handle "unknown"/"unreadable" states) treats it the same as
+ * a legitimate edge case rather than crashing or acting on bad data.
+ */
+export function sanitizeProduct(product: WcProduct): WcProduct {
+  let out = product;
+  if (!KNOWN_STOCK_STATUSES.has(out.stock_status)) {
+    logger.warn(
+      { productId: out.id, stockStatus: out.stock_status },
+      'WooCommerce product.stock_status is not a recognized value — degrading to outofstock so the bot never claims false availability',
+    );
+    out = { ...out, stock_status: 'outofstock' };
+  }
+  if (typeof out.permalink !== 'string') {
+    logger.warn(
+      { productId: out.id },
+      'WooCommerce product.permalink is missing/invalid — degrading to empty so productLink() falls back to the link template',
+    );
+    out = { ...out, permalink: '' };
+  }
+  return out;
+}
+
+const NUMERIC_STRING_RE = /^-?\d+(\.\d+)?$/;
+
+export function sanitizeOrder(order: WcOrder): WcOrder {
+  let out = order;
+  if (typeof out.total !== 'string' || !NUMERIC_STRING_RE.test(out.total)) {
+    logger.warn(
+      { orderId: out.id, total: out.total },
+      'WooCommerce order.total is not a numeric string — degrading to empty (parseAmount treats it as unreadable)',
+    );
+    out = { ...out, total: '' };
+  }
+  if (typeof out.status !== 'string' || !out.status) {
+    logger.warn(
+      { orderId: out.id, status: out.status },
+      'WooCommerce order.status is missing/invalid — degrading to "unknown" (never matches a confirmable/paid state)',
+    );
+    out = { ...out, status: 'unknown' };
+  }
+  if (typeof out.number !== 'string' || !out.number) {
+    logger.warn({ orderId: out.id }, 'WooCommerce order.number is missing/invalid — falling back to the internal id');
+    out = { ...out, number: String(out.id) };
+  }
+  const billing = out.billing ?? ({} as WcOrder['billing']);
+  const phoneOk = typeof billing.phone === 'string';
+  const emailOk = typeof billing.email === 'string';
+  if (!phoneOk || !emailOk) {
+    logger.warn(
+      { orderId: out.id },
+      'WooCommerce billing.phone/email is missing/invalid — degrading to empty strings',
+    );
+    out = { ...out, billing: { ...billing, phone: phoneOk ? billing.phone : '', email: emailOk ? billing.email : '' } };
+  }
+  return out;
+}
+
 async function request<T>(
   path: string,
   opts: { method?: string; query?: Record<string, string | number | undefined>; body?: unknown } = {},
@@ -215,12 +279,12 @@ export const woo = {
         orderby: 'popularity',
       },
     });
-    return data;
+    return data.map(sanitizeProduct);
   },
 
   async getProduct(id: number): Promise<WcProduct> {
     const { data } = await request<WcProduct>(`/products/${id}`);
-    return data;
+    return sanitizeProduct(data);
   },
 
   async listCategories(): Promise<WcCategory[]> {
@@ -239,14 +303,14 @@ export const woo = {
 
   async getOrder(id: number): Promise<WcOrder> {
     const { data } = await request<WcOrder>(`/orders/${id}`);
-    return data;
+    return sanitizeOrder(data);
   },
 
   async searchOrders(search: string, perPage = 100): Promise<WcOrder[]> {
     const { data } = await request<WcOrder[]>('/orders', {
       query: { search, per_page: perPage, orderby: 'date', order: 'desc' },
     });
-    return data;
+    return data.map(sanitizeOrder);
   },
 
   /**
@@ -297,7 +361,7 @@ export const woo = {
       method: 'PUT',
       body: { status },
     });
-    return data;
+    return sanitizeOrder(data);
   },
 };
 

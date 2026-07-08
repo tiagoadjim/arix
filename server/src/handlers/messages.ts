@@ -64,12 +64,46 @@ export function splitBubbles(text: string, max: number): string[] {
   return [...parts.slice(0, max - 1), parts.slice(max - 1).join('\n\n')];
 }
 
-interface ConvState {
+export interface ConvState {
   timer: NodeJS.Timeout | null;
   processing: boolean;
   dirty: boolean;
   lastImage: LastImage | null;
   imageAt: number;
+  /** Last time this conversation had real activity (an inbound message).
+   * Used only by evictIdleStates() below — never read for behavior. */
+  lastTouchedAt: number;
+}
+
+/** How long a conversation's in-memory state may sit idle before it's evicted. */
+export const STATE_IDLE_TTL_MS = 30 * 60 * 1000; // 30 min
+/** How often the sweep runs. */
+export const STATE_SWEEP_INTERVAL_MS = 10 * 60 * 1000; // 10 min
+
+/**
+ * Remove idle entries from `states` in place — the fix for MessageRouter's
+ * states Map growing forever (one entry per conversation ever seen, never
+ * freed). An entry is evicted only when it has no pending debounce timer and
+ * isn't mid-flush() (either would be lost mid-flight otherwise) AND has had
+ * no activity for at least `idleMs`. A later message for that conversation
+ * simply re-creates a fresh entry via state() — eviction only trims memory,
+ * it never changes observable behavior. Pure + exported so it's unit-testable
+ * without a real gateway/timers; returns the number of entries evicted.
+ */
+export function evictIdleStates(
+  states: Map<string, ConvState>,
+  now: number,
+  idleMs: number = STATE_IDLE_TTL_MS,
+): number {
+  let evicted = 0;
+  for (const [id, s] of states) {
+    if (s.timer || s.processing) continue;
+    if (now - s.lastTouchedAt >= idleMs) {
+      states.delete(id);
+      evicted += 1;
+    }
+  }
+  return evicted;
 }
 
 /**
@@ -140,13 +174,22 @@ async function jidToPhone(jid: string, sock: WASocket): Promise<string | null> {
 
 export class MessageRouter {
   private states = new Map<string, ConvState>();
+  private readonly sweepTimer: NodeJS.Timeout;
 
-  constructor(private readonly gateway: WhatsAppGateway) {}
+  constructor(private readonly gateway: WhatsAppGateway) {
+    // unref()'d so an idle sweep timer never keeps the process (or a test)
+    // alive on its own.
+    this.sweepTimer = setInterval(
+      () => evictIdleStates(this.states, Date.now()),
+      STATE_SWEEP_INTERVAL_MS,
+    );
+    this.sweepTimer.unref();
+  }
 
   private state(id: string): ConvState {
     let s = this.states.get(id);
     if (!s) {
-      s = { timer: null, processing: false, dirty: false, lastImage: null, imageAt: 0 };
+      s = { timer: null, processing: false, dirty: false, lastImage: null, imageAt: 0, lastTouchedAt: Date.now() };
       this.states.set(id, s);
     }
     return s;
@@ -225,6 +268,7 @@ export class MessageRouter {
     });
 
     const st = this.state(conv.id);
+    st.lastTouchedAt = Date.now();
     if (lastImage) {
       st.lastImage = { ...lastImage, messageId: inserted.id };
       st.imageAt = Date.now();

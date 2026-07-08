@@ -1,0 +1,18 @@
+{
+  "name": "vapenic-nico",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Nico — agente de IA de WhatsApp para Vapenic (Baileys + Minimax + WooCommerce + Supabase)",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev:server": "pnpm --filter @nico/server dev",
+    "dev:dashboard": "pnpm --filter @nico/dashboard dev",
+    "start:server": "pnpm --filter @nico/server start",
+    "typecheck": "pnpm --filter @nico/server typecheck && pnpm --filter @nico/dashboard typecheck",
+    "test": "pnpm --filter @nico/server test"
+  },
+  "packageManager": "pnpm@10.30.0"
+}

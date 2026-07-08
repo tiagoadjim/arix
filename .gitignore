@@ -1,0 +1,32 @@
+# deps
+node_modules/
+.pnpm-store/
+
+# env / secrets
+.env
+.env.local
+.env.*.local
+*.key
+
+# builds
+dist/
+build/
+.next/
+out/
+
+# baileys local auth (dev only — prod uses Supabase)
+auth_info_baileys/
+auth/
+
+# logs
+*.log
+logs/
+
+# os / editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# test
+coverage/

@@ -1,0 +1,83 @@
+// DB row shapes (mirror of the server types / SQL schema).
+
+export type ConversationMode = 'bot' | 'human';
+
+export interface Conversation {
+  id: string;
+  account_id: string;
+  wa_jid: string;
+  phone: string | null;
+  customer_name: string | null;
+  customer_email: string | null;
+  mode: ConversationMode;
+  assigned_to: string | null;
+  status: 'open' | 'closed';
+  escalation_reason: string | null;
+  unread_count: number;
+  last_message_at: string | null;
+  last_message_preview: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Message {
+  id: string;
+  conversation_id: string;
+  account_id: string;
+  direction: 'in' | 'out';
+  sender: 'customer' | 'nico' | 'human' | 'system';
+  wa_message_id: string | null;
+  msg_type: string;
+  body: string | null;
+  media_url: string | null;
+  media_mime: string | null;
+  send_status: 'pending' | 'sent' | 'failed' | null;
+  sent_by: string | null;
+  error: string | null;
+  created_at: string;
+}
+
+export interface Agent {
+  id: string;
+  email: string;
+  name: string | null;
+  created_at: string;
+}
+
+export interface StaffOrder {
+  id: number;
+  numero: string;
+  fecha: string;
+  estado: string;
+  estado_texto: string;
+  total: string;
+  moneda: string;
+  metodo_pago: string | null;
+  pagado: boolean;
+  items: { producto: string; cantidad: number }[];
+  envio: {
+    nombre: string | null;
+    direccion: string | null;
+    ciudad: string | null;
+    provincia: string | null;
+    cp: string | null;
+  };
+  telefono: string | null;
+  email: string | null;
+}
+
+export interface Receipt {
+  id: string;
+  conversation_id: string;
+  message_id: string | null;
+  account_id: string;
+  order_number: string | null;
+  woo_order_id: number | null;
+  media_url: string | null;
+  extracted_amount: number | null;
+  woo_total: number | null;
+  currency: string | null;
+  match_status: 'match' | 'mismatch' | 'unreadable' | 'pending';
+  note: string | null;
+  created_at: string;
+}

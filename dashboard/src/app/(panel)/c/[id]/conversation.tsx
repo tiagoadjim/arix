@@ -205,7 +205,6 @@ export function Conversation({ conversationId }: { conversationId: string }) {
                   </span>
                 )}
                 {m.media_url && (
-                  // eslint-disable-next-line @next/next/no-img-element
                   <img src={api.mediaUrl(m.media_url)} alt={t.conversation.mediaAlt} className="mt-1 max-w-[220px] rounded-md" />
                 )}
                 <span className="text-[10px] opacity-70">

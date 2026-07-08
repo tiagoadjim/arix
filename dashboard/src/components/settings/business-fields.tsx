@@ -106,11 +106,6 @@ interface BusinessFieldsProps {
   onChange: (values: BusinessFormValues) => void;
   uiLanguage: Locale;
   onUiLanguageChange: (locale: Locale) => void;
-  business?: SettingDto[];
-  agent?: SettingDto[];
-  info?: SettingDto[];
-  dispatch?: SettingDto[];
-  compliance?: SettingDto[];
   disabled?: boolean;
 }
 
@@ -124,11 +119,6 @@ export function BusinessFields({
   onChange,
   uiLanguage,
   onUiLanguageChange,
-  business,
-  agent,
-  info,
-  dispatch,
-  compliance,
   disabled,
 }: BusinessFieldsProps) {
   const { t } = useT();

@@ -35,7 +35,6 @@ export function ReceiptsPanel({ receipts }: ReceiptsPanelProps) {
         {receipts.map((r) => (
           <div key={r.id} className="rounded-md border border-border bg-muted/40 p-3 text-sm">
             {r.media_url && (
-              // eslint-disable-next-line @next/next/no-img-element
               <img src={api.mediaUrl(r.media_url)} alt={t.conversation.receiptImageAlt} className="mb-2 max-w-full rounded-md" />
             )}
             <div className="flex justify-between gap-2 text-xs">

@@ -79,7 +79,6 @@ export default function SetupPage() {
     return () => {
       alive = false;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router]);
 
   function pickLanguage(next: Locale) {
@@ -445,11 +444,6 @@ function BusinessStep({
         onChange={setValues}
         uiLanguage={uiLanguage}
         onUiLanguageChange={onUiLanguageChange}
-        business={grouped?.business}
-        agent={grouped?.agent}
-        info={grouped?.info}
-        dispatch={grouped?.dispatch}
-        compliance={grouped?.compliance}
         disabled={saving}
       />
       <Button onClick={() => void handleNext()} disabled={saving} className="w-fit self-end">

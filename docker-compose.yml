@@ -24,7 +24,10 @@ services:
 
   server:
     build:
-      context: ./server
+      # Repo root, not ./server: the Dockerfile needs the root
+      # pnpm-lock.yaml/pnpm-workspace.yaml for a workspace-aware install.
+      context: .
+      dockerfile: server/Dockerfile
     image: arix-server
     env_file: .env
     environment:
@@ -38,8 +41,8 @@ services:
     volumes:
       - receipts:/app/data/receipts
     # Not published to the host: the dashboard reaches it internally as server:3001,
-    # and the QR is scanned from logs / the authenticated dashboard. Health is checked
-    # inside the container below.
+    # and the WhatsApp QR is scanned from the dashboard's setup wizard (no host port
+    # needed for that). Health is checked inside the container below.
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://localhost:3001/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 30s
@@ -62,9 +65,16 @@ services:
       SERVER_API_URL: http://server:3001
     restart: unless-stopped
     depends_on:
-      - server
+      server:
+        condition: service_healthy
     ports:
       - "3000:3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/').then(r=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
     logging:
       driver: json-file
       options:

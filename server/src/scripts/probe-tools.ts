@@ -51,12 +51,10 @@ async function ask(
     const msg = resp.choices[0]?.message;
     const toolName = msg?.tool_calls?.[0]?.type === 'function' ? msg.tool_calls[0].function.name : undefined;
     const called = toolName === 'search_catalog';
-    // eslint-disable-next-line no-console
     console.log(
       `\n[${label}]\n  tool_call: ${toolName ?? '(none)'} ${called ? 'OK' : 'MISMATCH (expected: search_catalog)'}\n  content: ${JSON.stringify(msg?.content ?? '').slice(0, 200)}`,
     );
   } catch (err) {
-    // eslint-disable-next-line no-console
     console.log(`\n[${label}] ERROR: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
@@ -72,7 +70,6 @@ async function main(): Promise<void> {
     resolveLlmSettings(),
   ]);
 
-  // eslint-disable-next-line no-console
   console.log(`Probing provider="${handle.provider.id}" model="${handle.model}"`);
 
   const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
@@ -103,7 +100,6 @@ async function main(): Promise<void> {
       reasoning_split: true,
     });
   } else {
-    // eslint-disable-next-line no-console
     console.log(
       `\n[reasoning_split] skipped — MiniMax-specific quirk, not applicable to "${handle.provider.id}"`,
     );
@@ -117,7 +113,6 @@ async function main(): Promise<void> {
       tool_choice: { type: 'function', function: { name: 'search_catalog' } },
     });
   } else {
-    // eslint-disable-next-line no-console
     console.log(
       `\n[tool_choice forced] skipped — provider.supportsForcedToolChoice is false for "${handle.provider.id}"; runAgent relies on the nudge alone`,
     );
@@ -126,7 +121,6 @@ async function main(): Promise<void> {
   // llmSettings carries the fields chatComplete() itself doesn't need to know
   // about (reasoning_split/thinking, vision_fallback) — surfaced here purely
   // for operator visibility while probing.
-  // eslint-disable-next-line no-console
   console.log(
     `\nconfigured reasoningSplit=${llmSettings.reasoningSplit} thinkingDisabled=${llmSettings.thinkingDisabled} visionFallback=${llmSettings.visionFallback}`,
   );
@@ -135,7 +129,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
-  // eslint-disable-next-line no-console
   console.error(err);
   process.exit(1);
 });

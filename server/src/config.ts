@@ -109,7 +109,6 @@ if (!parsed.success) {
   const issues = parsed.error.issues
     .map((i) => `  - ${i.path.join('.') || '(root)'}: ${i.message}`)
     .join('\n');
-  // eslint-disable-next-line no-console
   console.error(`\n❌ Invalid environment configuration:\n${issues}\n\nSee env.example.\n`);
   process.exit(1);
 }

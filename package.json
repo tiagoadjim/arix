@@ -12,7 +12,13 @@
     "dev:dashboard": "pnpm --filter @arix/dashboard dev",
     "start:server": "pnpm --filter @arix/server start",
     "typecheck": "pnpm --filter @arix/server typecheck && pnpm --filter @arix/dashboard typecheck",
-    "test": "pnpm --filter @arix/server test"
+    "test": "pnpm --filter @arix/server test",
+    "lint": "eslint ."
   },
-  "packageManager": "pnpm@10.30.0"
+  "packageManager": "pnpm@10.30.0",
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.6.0",
+    "typescript-eslint": "^8.63.0"
+  }
 }

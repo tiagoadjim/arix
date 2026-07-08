@@ -147,7 +147,6 @@ export function WhatsAppPanel({ onConnected }: WhatsAppPanelProps) {
       </CardHeader>
       <CardContent className="flex flex-col items-center gap-4">
         {qrDataUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element
           <img
             src={qrDataUrl}
             alt={t.settings.whatsapp.qrAlt}

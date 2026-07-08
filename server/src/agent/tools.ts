@@ -23,7 +23,7 @@ export async function runTool(name: string, rawArgs: string, ctx: ToolContext): 
   const spec = byName.get(name);
   if (!spec) return JSON.stringify({ error: `tool desconocida: ${name}` });
 
-  let args: Record<string, unknown> = {};
+  let args: Record<string, unknown>;
   try {
     args = rawArgs ? (JSON.parse(rawArgs) as Record<string, unknown>) : {};
   } catch {

@@ -1,4 +1,4 @@
-# Nico dashboard — Next.js (standalone output).
+# Arix dashboard — Next.js (standalone output).
 # No NEXT_PUBLIC_* needed: all data goes through the proxied /api (runtime),
 # and middleware reads AUTH_JWT_SECRET / SERVER_API_URL at runtime.
 FROM node:24-slim AS builder

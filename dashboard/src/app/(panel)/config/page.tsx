@@ -114,7 +114,6 @@ function ProviderTab({ dtos, onSaved }: { dtos?: SettingDto[]; onSaved: () => vo
     const next = initProviderValues(dtos);
     setInitial(next);
     setValues(next);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dtos]);
 
   const dirty = isDirty(values, initial);
@@ -165,7 +164,6 @@ function StoreTab({
     const next = initStoreValues(wc, payment);
     setInitial(next);
     setValues(next);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wc, payment]);
 
   const dirty = isDirty(values, initial);
@@ -223,7 +221,6 @@ function BusinessTab({
     const next = initBusinessValues({ business, agent, info, dispatch, compliance });
     setInitial(next);
     setValues(next);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [business, agent, info, dispatch, compliance]);
 
   const dirty = isDirty(values, initial) || uiLanguage !== locale;
@@ -258,11 +255,6 @@ function BusinessTab({
         onChange={setValues}
         uiLanguage={uiLanguage}
         onUiLanguageChange={setUiLanguage}
-        business={business}
-        agent={agent}
-        info={info}
-        dispatch={dispatch}
-        compliance={compliance}
         disabled={saving}
       />
       <Button onClick={() => void handleSave()} disabled={saving || !dirty} className="w-fit">

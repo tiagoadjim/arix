@@ -53,7 +53,7 @@ const WEEKDAYS: Record<Language, readonly string[]> = { es: WEEKDAYS_ES, en: WEE
 const H = (h: number, m = 0): number => h * 60 + m;
 
 /**
- * Seed default for the `business.hours` setting — Vapenic's original schedule,
+ * Seed default for the `business.hours` setting — a placeholder schedule
  * kept as the out-of-the-box behavior until a deployment configures its own
  * from the dashboard. Editable there; this constant is only the fallback.
  */

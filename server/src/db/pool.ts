@@ -12,13 +12,44 @@ export const pool = new pg.Pool({ connectionString: config.DATABASE_URL });
 pool.on('error', (err) => logger.error({ err }, 'pg pool error'));
 
 const here = dirname(fileURLToPath(import.meta.url));
-const MIGRATIONS_DIR = join(here, 'migrations');
 
-/** Migration filenames sorted lexically (0001_*, 0002_*, …). */
-function listMigrationFiles(): string[] {
-  return readdirSync(MIGRATIONS_DIR)
-    .filter((f) => f.endsWith('.sql'))
-    .sort();
+/**
+ * Candidate migrations directories, tried in order until one actually reads.
+ *
+ * `import.meta.url` resolves to this source file in dev (tsx runs each
+ * module from its real path on disk), but to the tsup bundle's OWN path in
+ * production — bundling inlines every module into a single dist/index.js, so
+ * there's no separate file for pool.ts anymore, and `here` becomes dist/'s
+ * directory regardless of where this code originally lived. MIGRATIONS_DIR is
+ * an explicit override; the Dockerfile copies server/src/db/migrations to
+ * <app>/db/migrations to satisfy the last candidate.
+ */
+function migrationsDirCandidates(): string[] {
+  const candidates = [
+    join(here, 'migrations'), // dev (tsx): server/src/db/migrations
+    join(here, '../db/migrations'), // bundled: <app>/db/migrations, sibling of dist/
+  ];
+  return process.env.MIGRATIONS_DIR ? [process.env.MIGRATIONS_DIR, ...candidates] : candidates;
+}
+
+/** Migration filenames sorted lexically (0001_*, 0002_*, …), read from the
+ * first candidate directory that exists. */
+function listMigrationFiles(): { dir: string; files: string[] } {
+  const tried: string[] = [];
+  for (const dir of migrationsDirCandidates()) {
+    tried.push(dir);
+    try {
+      const files = readdirSync(dir)
+        .filter((f) => f.endsWith('.sql'))
+        .sort();
+      return { dir, files };
+    } catch {
+      // Not this one — try the next candidate.
+    }
+  }
+  throw new Error(
+    `Could not find the migrations directory. Tried: ${tried.join(', ')}. Set MIGRATIONS_DIR to override.`,
+  );
 }
 
 /**
@@ -43,11 +74,12 @@ export async function migrate(): Promise<void> {
     );
     const applied = new Set(rows.map((r) => r.version));
 
-    for (const file of listMigrationFiles()) {
+    const { dir, files } = listMigrationFiles();
+    for (const file of files) {
       const version = file.replace(/\.sql$/, '');
       if (applied.has(version)) continue;
 
-      const sql = readFileSync(join(MIGRATIONS_DIR, file), 'utf8');
+      const sql = readFileSync(join(dir, file), 'utf8');
       await client.query('begin');
       try {
         await client.query(sql);

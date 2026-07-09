@@ -102,7 +102,7 @@ describe('runAgent harness', () => {
           },
         ],
       });
-    runTool.mockResolvedValue(JSON.stringify({ encontrada: true, total: '15400' }));
+    runTool.mockResolvedValue(JSON.stringify({ found: true, total: '15400' }));
 
     const reply = await runAgent(ctx, history);
 
@@ -189,7 +189,7 @@ describe('runAgent input/output guards', () => {
       .mockResolvedValueOnce({
         choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'Ahora tenemos Elf Bar 🙌', tool_calls: [] } }],
       });
-    runTool.mockResolvedValue(JSON.stringify({ productos: [{ nombre: 'Elf Bar' }] }));
+    runTool.mockResolvedValue(JSON.stringify({ products: [{ name: 'Elf Bar' }] }));
 
     const reply = await runAgent(ctx, catalogHistory);
 
@@ -225,7 +225,7 @@ describe('runAgent input/output guards', () => {
       .mockResolvedValueOnce({
         choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: 'Ahora tenemos Elf Bar 🙌', tool_calls: [] } }],
       });
-    runTool.mockResolvedValue(JSON.stringify({ productos: [{ nombre: 'Elf Bar' }] }));
+    runTool.mockResolvedValue(JSON.stringify({ products: [{ name: 'Elf Bar' }] }));
 
     const reply = await runAgent(ctx, catalogHistory);
 

@@ -47,7 +47,7 @@ describe('confirm_payment', () => {
     const onConsumed = vi.fn();
     const res = await confirmar({ order_number: '1042', receipt_amount: 15400 }, ctxWith('5491112345678', onConsumed));
     expect(res.ok).toBe(true);
-    expect(res.confirmada).toBe(true);
+    expect(res.confirmed).toBe(true);
     expect(updateOrderStatus).toHaveBeenCalledWith(5, 'processing');
     expect(onConsumed).toHaveBeenCalled();
   });
@@ -60,7 +60,7 @@ describe('confirm_payment', () => {
       ctxWith('5499999999999'),
     );
     expect(res.ok).toBe(true);
-    expect(res.identidad_verificada).toBe(true);
+    expect(res.identity_verified).toBe(true);
   });
 
   it('asks for email (reason: ask_email) when phone does not match and no email given', async () => {

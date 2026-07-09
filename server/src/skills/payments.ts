@@ -118,7 +118,7 @@ export const paymentTools: ToolSpec[] = [
       if (receiptAmount == null || receiptAmount <= 0) return { ok: false, reason: 'invalid_amount' };
 
       const order = await woo.resolveOrderByNumber(orderNumber);
-      if (!order) return { ok: false, reason: 'order_not_found', numero: orderNumber };
+      if (!order) return { ok: false, reason: 'order_not_found', number: orderNumber };
 
       const total = parseAmount(order.total, decimalHint);
       const mediaUrl = ctx.lastImage?.mediaUrl ?? null;
@@ -158,12 +158,12 @@ export const paymentTools: ToolSpec[] = [
         ctx.onReceiptConsumed?.();
         return {
           ok: true,
-          ya_confirmada: true,
+          already_confirmed: true,
           // Raw WooCommerce status code — no Spanish label (see orders.ts's
           // STATUS_ES docstring).
           estado: order.status,
           total: order.total,
-          moneda: order.currency,
+          currency: order.currency,
         };
       }
 
@@ -190,9 +190,9 @@ export const paymentTools: ToolSpec[] = [
           ok: false,
           reason: 'amount_mismatch',
           total: order.total,
-          moneda: order.currency,
+          currency: order.currency,
           receipt_amount: receiptAmount,
-          diferencia: Math.round((receiptAmount - total) * 100) / 100,
+          difference: Math.round((receiptAmount - total) * 100) / 100,
         };
       }
 
@@ -203,12 +203,12 @@ export const paymentTools: ToolSpec[] = [
         ctx.onReceiptConsumed?.();
         return {
           ok: true,
-          confirmada: true,
+          confirmed: true,
           estado: updated.status,
           total: order.total,
-          moneda: order.currency,
+          currency: order.currency,
           receipt_amount: receiptAmount,
-          identidad_verificada: true,
+          identity_verified: true,
         };
       } catch (err) {
         await record('match', 'Monto coincide pero falló el cambio de estado en WooCommerce.');

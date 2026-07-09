@@ -55,7 +55,7 @@ export function productLink(product: Pick<WcProduct, 'permalink' | 'slug'>, wc: 
 function variationSummary(v: WcVariation) {
   const flavor = v.attributes?.[0]?.option ?? null;
   return {
-    sabor: flavor,
+    variant: flavor,
     price: v.price || v.regular_price || null,
     stock: STOCK_CODE[v.stock_status] ?? v.stock_status,
     quantity: v.stock_quantity,
@@ -111,12 +111,12 @@ export const catalogTools: ToolSpec[] = [
           categories: p.categories?.map((c) => c.name) ?? [],
           variants: flavorsOf(p),
           link: productLink(p, wc),
-          variaciones: undefined as unknown,
+          variations: undefined as unknown,
         };
         if (p.type === 'variable' && p.variations?.length && enriched < 5) {
           try {
             const variations = await woo.getVariations(p.id);
-            base.variaciones = variations.map(variationSummary);
+            base.variations = variations.map(variationSummary);
             enriched += 1;
           } catch (err) {
             logger.warn({ err, productId: p.id }, 'failed to load variations');
@@ -147,12 +147,12 @@ export const catalogTools: ToolSpec[] = [
     },
     handler: async (args) => {
       const id = Number(args.product_id);
-      if (!Number.isFinite(id)) return { error: 'product_id inválido' };
+      if (!Number.isFinite(id)) return { error: 'invalid_product_id' };
       const [p, wc] = await Promise.all([woo.getProduct(id), wooConfig()]);
-      let variaciones: unknown = undefined;
+      let variations: unknown = undefined;
       if (p.type === 'variable' && p.variations?.length) {
         try {
-          variaciones = (await woo.getVariations(p.id)).map(variationSummary);
+          variations = (await woo.getVariations(p.id)).map(variationSummary);
         } catch (err) {
           logger.warn({ err, productId: p.id }, 'failed to load variations');
         }
@@ -163,9 +163,9 @@ export const catalogTools: ToolSpec[] = [
         price: p.price || p.regular_price || null,
         currency: wc.currency,
         stock: STOCK_CODE[p.stock_status] ?? p.stock_status,
-        descripcion: (p.short_description ?? '').replace(/<[^>]+>/g, '').trim() || null,
+        description: (p.short_description ?? '').replace(/<[^>]+>/g, '').trim() || null,
         variants: flavorsOf(p),
-        variaciones,
+        variations,
         link: productLink(p, wc),
       };
     },

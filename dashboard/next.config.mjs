@@ -14,12 +14,14 @@ const nextConfig = {
   // Pin the monorepo root explicitly when it's actually there — without
   // this, Next.js falls back to auto-detecting it from the nearest lockfile,
   // which can pick the wrong directory on a machine that happens to have
-  // another pnpm lockfile further up the filesystem tree. Guarded by
-  // existsSync because the Docker build context is `./dashboard` alone (no
-  // workspace root above it there): pinning a parent that doesn't exist
-  // would make the standalone output nest an extra directory level deep
-  // (`.next/standalone/app/server.js` instead of `.next/standalone/server.js`)
-  // and break the Dockerfile's `CMD ["node", "server.js"]`.
+  // another pnpm lockfile further up the filesystem tree. The Docker build
+  // context is the repo root (see docker-compose.yml / dashboard/Dockerfile),
+  // so pnpm-workspace.yaml is normally present; existsSync still guards this
+  // for non-Docker builds run from inside ./dashboard alone, where pinning a
+  // parent that doesn't exist would make the standalone output nest an extra
+  // directory level deep (`.next/standalone/app/server.js` instead of
+  // `.next/standalone/server.js`) and break the Dockerfile's
+  // `CMD ["node", "server.js"]`.
   outputFileTracingRoot: existsSync(path.join(monorepoRoot, 'pnpm-workspace.yaml'))
     ? monorepoRoot
     : __dirname,

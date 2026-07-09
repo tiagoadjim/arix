@@ -106,25 +106,25 @@ export function orderForStaff(order: WcOrder) {
     null;
   return {
     id: order.id,
-    numero: order.number,
-    fecha: order.date_created,
+    number: order.number,
+    date: order.date_created,
     // Raw WooCommerce status code — the dashboard renders the label itself
     // via its own i18n orderStatuses dict (see orders-panel.tsx), so no
     // Spanish label is sent over the wire (see STATUS_ES's docstring).
     estado: order.status,
     total: order.total,
-    moneda: order.currency,
-    metodo_pago: order.payment_method_title || order.payment_method || null,
-    pagado: Boolean(order.date_paid),
-    items: (order.line_items ?? []).map((li) => ({ producto: li.name, cantidad: li.quantity })),
-    envio: {
-      nombre: name,
-      direccion: [s.address_1 ?? b.address_1, s.address_2 ?? b.address_2].filter(Boolean).join(', ') || null,
-      ciudad: s.city ?? b.city ?? null,
-      provincia: s.state ?? b.state ?? null,
-      cp: s.postcode ?? b.postcode ?? null,
+    currency: order.currency,
+    payment_method: order.payment_method_title || order.payment_method || null,
+    paid: Boolean(order.date_paid),
+    items: (order.line_items ?? []).map((li) => ({ product: li.name, quantity: li.quantity })),
+    shipping: {
+      name,
+      address: [s.address_1 ?? b.address_1, s.address_2 ?? b.address_2].filter(Boolean).join(', ') || null,
+      city: s.city ?? b.city ?? null,
+      state: s.state ?? b.state ?? null,
+      postal_code: s.postcode ?? b.postcode ?? null,
     },
-    telefono: b.phone || null,
+    phone: b.phone || null,
     email: b.email || null,
   };
 }
@@ -133,22 +133,22 @@ export function orderForStaff(order: WcOrder) {
 export function orderSummary(order: WcOrder, ctx: ToolContext) {
   const chatSuffix = phoneSuffix(ctx.phone);
   const orderSuffix = phoneSuffix(order.billing?.phone);
-  const telefonoCoincide = chatSuffix && orderSuffix ? chatSuffix === orderSuffix : null;
+  const phoneMatches = chatSuffix && orderSuffix ? chatSuffix === orderSuffix : null;
   return {
-    encontrada: true,
-    numero: order.number,
+    found: true,
+    number: order.number,
     order_id: order.id,
     // Raw WooCommerce status code (no Spanish label) — the reply LANGUAGE is
     // already pinned by the persona prompt, so the model just needs the code.
     estado: order.status,
     total: order.total,
-    moneda: order.currency,
-    metodo_pago: order.payment_method_title || order.payment_method,
-    cliente: [order.billing?.first_name, order.billing?.last_name].filter(Boolean).join(' ') || null,
-    items: (order.line_items ?? []).map((li) => ({ producto: li.name, cantidad: li.quantity })),
-    fecha: order.date_created,
-    pagado: Boolean(order.date_paid),
-    telefono_coincide: telefonoCoincide,
+    currency: order.currency,
+    payment_method: order.payment_method_title || order.payment_method,
+    customer: [order.billing?.first_name, order.billing?.last_name].filter(Boolean).join(' ') || null,
+    items: (order.line_items ?? []).map((li) => ({ product: li.name, quantity: li.quantity })),
+    date: order.date_created,
+    paid: Boolean(order.date_paid),
+    phone_matches: phoneMatches,
   };
 }
 
@@ -180,18 +180,18 @@ export const orderTools: ToolSpec[] = [
     handler: async (args, ctx) => {
       const orderNumber = String(args.order_number ?? '').trim();
       const email = String(args.email ?? '').trim();
-      if (!orderNumber) return { encontrada: false, reason: 'missing_order_number' };
+      if (!orderNumber) return { found: false, reason: 'missing_order_number' };
       const order = await woo.resolveOrderByNumber(orderNumber);
-      if (!order) return { encontrada: false, numero: orderNumber };
+      if (!order) return { found: false, number: orderNumber };
 
       // Privacy gate: order numbers are guessable. Only reveal PII/total when the
       // identity is verified (phone or email). Otherwise ask for the email.
       const id = checkIdentity(order, ctx, email);
       if (!id.verified) {
         return {
-          encontrada: true,
-          verificada: false,
-          numero: order.number,
+          found: true,
+          verified: false,
+          number: order.number,
           reason: id.emailProvided ? 'email_mismatch' : 'ask_email',
           message: id.emailProvided
             ? "The email doesn't match the order. Ask the customer to double-check the email, or hand off to a human."

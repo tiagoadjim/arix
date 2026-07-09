@@ -46,24 +46,24 @@ export interface Agent {
 
 export interface StaffOrder {
   id: number;
-  numero: string;
-  fecha: string;
+  number: string;
+  date: string;
   // Raw WooCommerce status code — the dashboard renders the label itself via
   // its own i18n orderStatuses dict (see orders-panel.tsx's statusLabel()).
   estado: string;
   total: string;
-  moneda: string;
-  metodo_pago: string | null;
-  pagado: boolean;
-  items: { producto: string; cantidad: number }[];
-  envio: {
-    nombre: string | null;
-    direccion: string | null;
-    ciudad: string | null;
-    provincia: string | null;
-    cp: string | null;
+  currency: string;
+  payment_method: string | null;
+  paid: boolean;
+  items: { product: string; quantity: number }[];
+  shipping: {
+    name: string | null;
+    address: string | null;
+    city: string | null;
+    state: string | null;
+    postal_code: string | null;
   };
-  telefono: string | null;
+  phone: string | null;
   email: string | null;
 }
 

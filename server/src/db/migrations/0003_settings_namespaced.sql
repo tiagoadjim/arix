@@ -28,18 +28,14 @@ where key = 'compliance_rules' and not exists (select 1 from settings where key 
 delete from settings where key = 'compliance_rules';
 
 -- Seed any of the renamed keys that are still missing (e.g. a legacy row never
--- existed on this DB). Matches the 0001_init defaults/placeholders exactly.
+-- existed on this DB). Matches the 0001_init defaults/placeholders exactly:
+-- blank, brand-neutral placeholders — the agent falls back to a neutral,
+-- language-aware template at send time (see skills/orders.ts's
+-- DEFAULT_DELIVERY_TEMPLATE) when `dispatch.template` is empty.
 insert into settings (key, value) values
   ('info.payment', ''),
   ('info.shipping', ''),
   ('info.general', ''),
   ('compliance.rules', ''),
-  ('dispatch.template',
-   '🛵 ¡Tu pedido #{numero} ya salió para entrega!
-
-Seguí al repartidor en tiempo real acá:
-{link}
-
-Tu código de entrega es: *{codigo}*
-Decíselo al repartidor cuando llegue para recibir tu pedido. ¡Gracias por tu compra! 💚')
+  ('dispatch.template', '')
 on conflict (key) do nothing;

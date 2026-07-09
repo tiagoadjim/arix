@@ -80,7 +80,7 @@ describe('orderForStaff', () => {
 
     const staff = orderForStaff(order);
     expect(staff.id).toBe(8732);
-    expect(staff.numero).toBe('1500');
-    expect(staff.items).toEqual([{ producto: 'Vape X', cantidad: 2 }]);
+    expect(staff.number).toBe('1500');
+    expect(staff.items).toEqual([{ product: 'Vape X', quantity: 2 }]);
   });
 });

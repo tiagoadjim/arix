@@ -97,4 +97,36 @@ describe('WhatsAppGateway.restart()', () => {
     expect(clearStateMock).not.toHaveBeenCalled();
     expect(makeWASocketMock).toHaveBeenCalledTimes(1);
   });
+
+  it('with clearSession: true — a close event fired WHILE logout() is in flight is ignored (handleClose early-returns on `stopped`), so clearState is never called twice', async () => {
+    const gw = new WhatsAppGateway();
+    await gw.start();
+    const firstSock = sockets[0]!;
+
+    // Grab the 'connection.update' handler socket.ts registered on this
+    // socket, so we can simulate Baileys firing its own close event as a
+    // side effect of logout() — a real scenario, since logging out a socket
+    // can itself trigger a 'close'.
+    const onCalls = firstSock.ev.on.mock.calls as Array<[string, (update: unknown) => void]>;
+    const connectionUpdateHandler = onCalls.find(([event]) => event === 'connection.update')?.[1];
+    expect(connectionUpdateHandler).toBeDefined();
+
+    firstSock.logout.mockImplementationOnce(async () => {
+      // Fired mid-restart, while `this.stopped` is already true (set by
+      // restart() before calling logout()) and `this.sock` still === firstSock
+      // (teardownSocket() hasn't run yet) — handleClose() must early-return
+      // instead of running its own DisconnectReason.loggedOut clearState().
+      connectionUpdateHandler!({
+        connection: 'close',
+        lastDisconnect: { error: { output: { statusCode: DisconnectReason.loggedOut } } },
+      });
+    });
+
+    await gw.restart({ clearSession: true });
+
+    // Only restart()'s own explicit clearState() call — handleClose()'s
+    // loggedOut branch never ran a second one.
+    expect(clearStateMock).toHaveBeenCalledTimes(1);
+    expect(makeWASocketMock).toHaveBeenCalledTimes(2);
+  });
 });

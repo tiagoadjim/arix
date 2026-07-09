@@ -97,24 +97,24 @@ export function OrdersPanel({ conversationId, orders, state, onReload }: OrdersP
           </p>
         )}
         {orders.map((o) => (
-          <div key={o.numero} className="rounded-md border border-border bg-muted/40 p-3 text-sm">
+          <div key={o.number} className="rounded-md border border-border bg-muted/40 p-3 text-sm">
             <div className="flex items-center justify-between gap-2 font-medium">
-              <span>#{o.numero}</span>
+              <span>#{o.number}</span>
               <Badge variant={SUCCESS_STATUSES.has(o.estado) ? 'success' : 'outline'}>{statusLabel(o.estado, o.estado)}</Badge>
             </div>
             <p className="mt-1 text-xs text-muted-foreground">
-              {formatDate(o.fecha, locale)} · {o.total} {o.moneda}
-              {o.metodo_pago ? ` · ${o.metodo_pago}` : ''}
+              {formatDate(o.date, locale)} · {o.total} {o.currency}
+              {o.payment_method ? ` · ${o.payment_method}` : ''}
             </p>
-            {o.envio.direccion && (
+            {o.shipping.address && (
               <p className="mt-1 text-xs text-muted-foreground">
-                {[o.envio.nombre, o.envio.direccion, o.envio.ciudad, o.envio.provincia].filter(Boolean).join(', ')}
+                {[o.shipping.name, o.shipping.address, o.shipping.city, o.shipping.state].filter(Boolean).join(', ')}
               </p>
             )}
             <ul className="mt-2 list-disc pl-4 text-xs">
               {o.items.map((it, idx) => (
                 <li key={idx}>
-                  {it.cantidad}× {it.producto}
+                  {it.quantity}× {it.product}
                 </li>
               ))}
             </ul>
@@ -195,7 +195,7 @@ function DispatchDialog({ order, conversationId, onOpenChange, onSent }: Dispatc
       const r = await api.sendDelivery(conversationId, order.id, {
         trackingUrl: trackingUrl.trim(),
         deliveryCode: deliveryCode.trim(),
-        orderNumber: order.numero,
+        orderNumber: order.number,
       });
       toast.success(r.statusUpdated ? t.conversation.dispatchSent : t.conversation.dispatchSentNoStatus);
       onOpenChange(false);

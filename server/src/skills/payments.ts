@@ -161,7 +161,7 @@ export const paymentTools: ToolSpec[] = [
           already_confirmed: true,
           // Raw WooCommerce status code — no Spanish label (see orders.ts's
           // STATUS_ES docstring).
-          estado: order.status,
+          status: order.status,
           total: order.total,
           currency: order.currency,
         };
@@ -175,7 +175,7 @@ export const paymentTools: ToolSpec[] = [
         return {
           ok: false,
           reason: 'order_not_confirmable',
-          estado: order.status,
+          status: order.status,
         };
       }
 
@@ -204,7 +204,7 @@ export const paymentTools: ToolSpec[] = [
         return {
           ok: true,
           confirmed: true,
-          estado: updated.status,
+          status: updated.status,
           total: order.total,
           currency: order.currency,
           receipt_amount: receiptAmount,

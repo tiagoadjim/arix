@@ -57,8 +57,8 @@ export function OrdersPanel({ conversationId, orders, state, onReload }: OrdersP
   }
 
   async function changeStatus(o: StaffOrder) {
-    const status = statusSel[o.id] ?? o.estado;
-    if (status === o.estado) return;
+    const status = statusSel[o.id] ?? o.status;
+    if (status === o.status) return;
     setBusy((b) => ({ ...b, [o.id]: true }));
     try {
       await api.updateOrderStatus(conversationId, o.id, status);
@@ -100,7 +100,7 @@ export function OrdersPanel({ conversationId, orders, state, onReload }: OrdersP
           <div key={o.number} className="rounded-md border border-border bg-muted/40 p-3 text-sm">
             <div className="flex items-center justify-between gap-2 font-medium">
               <span>#{o.number}</span>
-              <Badge variant={SUCCESS_STATUSES.has(o.estado) ? 'success' : 'outline'}>{statusLabel(o.estado, o.estado)}</Badge>
+              <Badge variant={SUCCESS_STATUSES.has(o.status) ? 'success' : 'outline'}>{statusLabel(o.status, o.status)}</Badge>
             </div>
             <p className="mt-1 text-xs text-muted-foreground">
               {formatDate(o.date, locale)} · {o.total} {o.currency}
@@ -121,7 +121,7 @@ export function OrdersPanel({ conversationId, orders, state, onReload }: OrdersP
 
             <div className="mt-3 flex gap-2">
               <Select
-                value={statusSel[o.id] ?? o.estado}
+                value={statusSel[o.id] ?? o.status}
                 onValueChange={(v) => setStatusSel((s) => ({ ...s, [o.id]: v }))}
                 disabled={busy[o.id]}
               >
@@ -140,7 +140,7 @@ export function OrdersPanel({ conversationId, orders, state, onReload }: OrdersP
                 variant="outline"
                 size="sm"
                 onClick={() => void changeStatus(o)}
-                disabled={busy[o.id] || (statusSel[o.id] ?? o.estado) === o.estado}
+                disabled={busy[o.id] || (statusSel[o.id] ?? o.status) === o.status}
               >
                 {t.conversation.changeStatusButton}
               </Button>

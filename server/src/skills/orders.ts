@@ -111,7 +111,7 @@ export function orderForStaff(order: WcOrder) {
     // Raw WooCommerce status code — the dashboard renders the label itself
     // via its own i18n orderStatuses dict (see orders-panel.tsx), so no
     // Spanish label is sent over the wire (see STATUS_ES's docstring).
-    estado: order.status,
+    status: order.status,
     total: order.total,
     currency: order.currency,
     payment_method: order.payment_method_title || order.payment_method || null,
@@ -140,7 +140,7 @@ export function orderSummary(order: WcOrder, ctx: ToolContext) {
     order_id: order.id,
     // Raw WooCommerce status code (no Spanish label) — the reply LANGUAGE is
     // already pinned by the persona prompt, so the model just needs the code.
-    estado: order.status,
+    status: order.status,
     total: order.total,
     currency: order.currency,
     payment_method: order.payment_method_title || order.payment_method,

@@ -50,7 +50,7 @@ export interface StaffOrder {
   date: string;
   // Raw WooCommerce status code — the dashboard renders the label itself via
   // its own i18n orderStatuses dict (see orders-panel.tsx's statusLabel()).
-  estado: string;
+  status: string;
   total: string;
   currency: string;
   payment_method: string | null;

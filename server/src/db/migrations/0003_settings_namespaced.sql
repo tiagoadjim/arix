@@ -20,8 +20,8 @@ where key = 'info_general' and not exists (select 1 from settings where key = 'i
 delete from settings where key = 'info_general';
 
 update settings set key = 'dispatch.template', updated_at = now()
-where key = 'uber_envio_template' and not exists (select 1 from settings where key = 'dispatch.template');
-delete from settings where key = 'uber_envio_template';
+where key = 'envio_template' and not exists (select 1 from settings where key = 'dispatch.template');
+delete from settings where key = 'envio_template';
 
 update settings set key = 'compliance.rules', updated_at = now()
 where key = 'compliance_rules' and not exists (select 1 from settings where key = 'compliance.rules');

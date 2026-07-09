@@ -1,4 +1,5 @@
 import { setConversationMode, insertOutboundMessage } from '../db/repo';
+import { businessProfile } from '../config/runtime';
 import { logger } from '../logger';
 import type { ToolSpec } from '../agent/tool-spec';
 import type { ToolContext } from '../types';
@@ -25,16 +26,21 @@ export const handoffTools: ToolSpec[] = [
       },
     },
     handler: async (args, ctx: ToolContext) => {
-      const reason = String(args.reason ?? '').trim() || 'sin motivo especificado';
+      // Internal system note only (never sent to WhatsApp) — picks the
+      // business's configured agent language when it's trivially available,
+      // defaulting to English otherwise.
+      const profile = await businessProfile().catch(() => null);
+      const isEs = profile?.language === 'es';
+      const reason = String(args.reason ?? '').trim() || (isEs ? 'sin motivo especificado' : 'no reason specified');
       await setConversationMode(ctx.conversationId, 'human', { escalationReason: reason });
       await insertOutboundMessage({
         conversationId: ctx.conversationId,
         sender: 'system',
-        body: `🙋 Derivado a un humano. Motivo: ${reason}`,
+        body: isEs ? `🙋 Derivado a un humano. Motivo: ${reason}` : `🙋 Handed off to a human. Reason: ${reason}`,
         sendStatus: 'sent', // internal note, not sent to WhatsApp
       });
       logger.info({ conversationId: ctx.conversationId, reason }, 'escalated to human');
-      return { ok: true, derivado: true };
+      return { ok: true, handed_off: true };
     },
   },
 ];

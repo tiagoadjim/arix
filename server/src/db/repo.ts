@@ -299,6 +299,27 @@ export async function createStaff(email: string, passwordHash: string, name: str
   return row;
 }
 
+/**
+ * Strict variant of {@link createStaff} for POST /api/staff: `DO NOTHING`
+ * instead of `DO UPDATE`, so a duplicate email never silently overwrites an
+ * existing account's password/name — returns null when the row already
+ * existed (atomic, race-safe unlike a pre-check + insert), letting the
+ * caller answer 409. `createStaff`'s upsert semantics are kept as-is for the
+ * break-glass CLI, which intentionally resets a known account.
+ */
+export async function createStaffStrict(
+  email: string,
+  passwordHash: string,
+  name: string | null,
+): Promise<Staff | null> {
+  return one<Staff>(
+    `insert into staff (email, password_hash, name) values ($1, $2, $3)
+     on conflict (email) do nothing
+     returning id, email, password_hash, name`,
+    [email, passwordHash, name],
+  );
+}
+
 export async function listStaff(): Promise<StaffSummary[]> {
   return many<StaffSummary>('select id, email, name, created_at from staff order by created_at asc');
 }

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import { api, type SettingDto } from '@/lib/api';
+import { api, apiErrorMessage, type SettingDto } from '@/lib/api';
 import { setLocaleCookie, type Locale } from '@/lib/i18n';
 import { useT } from '@/lib/i18n/provider';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -130,7 +130,7 @@ function ProviderTab({ dtos, onSaved }: { dtos?: SettingDto[]; onSaved: () => vo
       toast.success(t.settings.savedToast);
       await onSaved();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : t.common.error);
+      toast.error(apiErrorMessage(err, t, t.common.error));
     } finally {
       setSaving(false);
     }
@@ -180,7 +180,7 @@ function StoreTab({
       toast.success(t.settings.savedToast);
       await onSaved();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : t.common.error);
+      toast.error(apiErrorMessage(err, t, t.common.error));
     } finally {
       setSaving(false);
     }
@@ -242,7 +242,7 @@ function BusinessTab({
       toast.success(t.settings.savedToast);
       await onSaved();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : t.common.error);
+      toast.error(apiErrorMessage(err, t, t.common.error));
     } finally {
       setSaving(false);
     }

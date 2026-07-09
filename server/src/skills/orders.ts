@@ -4,6 +4,13 @@ import { logger } from '../logger';
 import type { ToolSpec } from '../agent/tool-spec';
 import type { ToolContext } from '../types';
 
+/**
+ * Set of valid order status codes, keyed by the raw WooCommerce status
+ * (values are Spanish labels kept only for the legacy `en-camino` custom
+ * status's internal documentation — NEVER sent to the model or the
+ * dashboard: both now render status purely from the raw code, the model via
+ * the code itself and the dashboard via its own i18n orderStatuses dict).
+ */
 export const STATUS_ES: Record<string, string> = {
   pending: 'pago pendiente',
   processing: 'en preparación',
@@ -17,17 +24,30 @@ export const STATUS_ES: Record<string, string> = {
 
 /** Default WhatsApp template sent to the customer when an order ships for delivery.
  *  Placeholders: {numero} {link} {codigo}. Editable from the dashboard (settings key
- *  `dispatch.template`, see config/runtime.ts's dispatchTemplate()); this constant
- *  is the fallback when that setting is empty. */
-export const DEFAULT_DELIVERY_TEMPLATE = `🛵 ¡Tu pedido #{numero} ya salió para entrega!
+ *  `dispatch.template`, see config/runtime.ts's dispatchTemplate()); this is the
+ *  fallback when that setting is empty, picked by the business's agent
+ *  language (businessProfile().language) at the point the template is
+ *  resolved — see POST /api/conversations/:id/orders/:orderId/delivery in
+ *  api/server.ts. Courier-agnostic by design: no third-party delivery brand
+ *  is baked in. */
+export const DEFAULT_DELIVERY_TEMPLATE: Record<'es' | 'en', string> = {
+  es: `🛵 ¡Tu pedido #{numero} ya salió para entrega!
 
-Seguí al repartidor en tiempo real acá:
+Seguí el envío en tiempo real acá:
 {link}
 
 Tu código de entrega es: *{codigo}*
-Decíselo al repartidor cuando llegue para recibir tu pedido. ¡Gracias por tu compra! 💚`;
+Decíselo a la persona que te lo entregue para recibir tu pedido. ¡Gracias por tu compra! 💚`,
+  en: `🛵 Your order #{numero} is out for delivery!
 
-/** Fill the Uber-Moto delivery template with the tracking link + code. */
+Track it live here:
+{link}
+
+Your delivery code is: *{codigo}*
+Give it to the person delivering it to receive your order. Thanks for your purchase! 💚`,
+};
+
+/** Fill the delivery message template with the tracking link + code. */
 export function buildDeliveryMessage(
   template: string,
   vars: { numero: string; link: string; codigo: string },
@@ -76,8 +96,6 @@ export async function persistVerifiedEmail(
   );
 }
 
-const STATUS_LABEL = (s: string) => STATUS_ES[s] ?? s;
-
 /** Detailed order view for the staff dashboard (items + shipping address). */
 export function orderForStaff(order: WcOrder) {
   const s = order.shipping ?? {};
@@ -90,8 +108,10 @@ export function orderForStaff(order: WcOrder) {
     id: order.id,
     numero: order.number,
     fecha: order.date_created,
+    // Raw WooCommerce status code — the dashboard renders the label itself
+    // via its own i18n orderStatuses dict (see orders-panel.tsx), so no
+    // Spanish label is sent over the wire (see STATUS_ES's docstring).
     estado: order.status,
-    estado_texto: STATUS_LABEL(order.status),
     total: order.total,
     moneda: order.currency,
     metodo_pago: order.payment_method_title || order.payment_method || null,
@@ -118,8 +138,9 @@ export function orderSummary(order: WcOrder, ctx: ToolContext) {
     encontrada: true,
     numero: order.number,
     order_id: order.id,
+    // Raw WooCommerce status code (no Spanish label) — the reply LANGUAGE is
+    // already pinned by the persona prompt, so the model just needs the code.
     estado: order.status,
-    estado_texto: STATUS_ES[order.status] ?? order.status,
     total: order.total,
     moneda: order.currency,
     metodo_pago: order.payment_method_title || order.payment_method,
@@ -159,7 +180,7 @@ export const orderTools: ToolSpec[] = [
     handler: async (args, ctx) => {
       const orderNumber = String(args.order_number ?? '').trim();
       const email = String(args.email ?? '').trim();
-      if (!orderNumber) return { encontrada: false, motivo: 'falta_numero_orden' };
+      if (!orderNumber) return { encontrada: false, reason: 'missing_order_number' };
       const order = await woo.resolveOrderByNumber(orderNumber);
       if (!order) return { encontrada: false, numero: orderNumber };
 
@@ -171,10 +192,10 @@ export const orderTools: ToolSpec[] = [
           encontrada: true,
           verificada: false,
           numero: order.number,
-          motivo: id.emailProvided ? 'email_no_coincide' : 'pedir_email',
-          mensaje: id.emailProvided
-            ? 'El email no coincide con la orden. Pedile que verifique el email, o derivá a un humano.'
-            : 'El teléfono no coincide con la orden. Pedile el email con el que hizo la compra y volvé a intentar pasándolo en "email".',
+          reason: id.emailProvided ? 'email_mismatch' : 'ask_email',
+          message: id.emailProvided
+            ? "The email doesn't match the order. Ask the customer to double-check the email, or hand off to a human."
+            : 'The phone number doesn\'t match the order. Ask the customer for the email used for the purchase and call this tool again passing it in "email".',
         };
       }
       // Remember the verified email so the dashboard can list this customer's orders.

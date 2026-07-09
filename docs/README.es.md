@@ -239,6 +239,7 @@ Planeado, sin fechas comprometidas:
 - Inbox en tiempo real (SSE), reemplazando el polling
 - Panel de analítica de uso/costos
 - Canales de mensajería adicionales (evaluando)
+- Permisos de equipo basados en roles (admin vs agente)
 
 ## Contribuir
 

@@ -97,6 +97,20 @@ export function normalizeSettingsUpdates(body: unknown): SettingsUpdateInput[] {
   return [];
 }
 
+/**
+ * True when an update targets a `secret: true` key with an empty/absent
+ * value (`''`, `null`, or `undefined`). For secret keys, that means "keep the
+ * currently stored value" — mirrors the dashboard's `secretUpdate()` (a blank
+ * secret field is never sent as a clear request, see
+ * dashboard/src/components/settings/settings-form-utils.ts), and is enforced
+ * here too since PUT /api/settings also accepts direct, non-dashboard callers.
+ * Non-secret keys are never a no-op this way: an explicit '' for a plain
+ * string setting is a legitimate "clear it" request.
+ */
+export function isNoOpSecretUpdate(entry: SettingDefinition, raw: unknown): boolean {
+  return entry.secret === true && (raw === '' || raw === null || raw === undefined);
+}
+
 /** Inverse of runtime.ts's parseRawValue(): coerce an incoming JS value (from
  * a PUT request body) into the TEXT representation stored in the `settings`
  * table. Mirrors parseRawValue's own fallback rules (bad enum/number falls

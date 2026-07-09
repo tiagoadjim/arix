@@ -140,6 +140,11 @@ export async function getLlm(): Promise<LlmHandle> {
     apiKey: resolved.apiKey || 'unconfigured',
     baseURL: resolved.baseUrl || provider.baseURL,
     maxRetries: 0,
+    // The SDK's default (600s) is unacceptable for a chat turn — bound it the
+    // same way the setup-wizard credential-test client already does (15s
+    // there; this is a real conversational request, so a slightly larger
+    // budget) so a hung provider can't wedge a WhatsApp reply indefinitely.
+    timeout: 60_000,
   });
 
   const handle: LlmHandle = {

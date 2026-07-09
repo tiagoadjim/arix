@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isLoneStickerRun, evictIdleStates, STATE_IDLE_TTL_MS } from '../src/handlers/messages';
+import { isLoneStickerRun, evictIdleStates, pruneWarnedUnconfigured, STATE_IDLE_TTL_MS } from '../src/handlers/messages';
 import type { Message } from '../src/types';
 import type { ConvState } from '../src/handlers/messages';
 
@@ -94,5 +94,38 @@ describe('evictIdleStates', () => {
     const states = new Map([['c1', state({ lastTouchedAt: 0 })]]);
     const evicted = evictIdleStates(states, STATE_IDLE_TTL_MS + 1);
     expect(evicted).toBe(1);
+  });
+});
+
+describe('pruneWarnedUnconfigured', () => {
+  const state = (over: Partial<ConvState> = {}): ConvState => ({
+    timer: null,
+    processing: false,
+    dirty: false,
+    lastImage: null,
+    imageAt: 0,
+    lastTouchedAt: 0,
+    ...over,
+  });
+
+  it('drops a warned conversation ID once its state entry is gone', () => {
+    const states = new Map<string, ConvState>(); // already evicted
+    const warned = new Set(['c1']);
+    pruneWarnedUnconfigured(warned, states);
+    expect(warned.has('c1')).toBe(false);
+  });
+
+  it('keeps a warned conversation ID whose state entry is still live', () => {
+    const states = new Map([['c1', state()]]);
+    const warned = new Set(['c1']);
+    pruneWarnedUnconfigured(warned, states);
+    expect(warned.has('c1')).toBe(true);
+  });
+
+  it('prunes multiple stale entries, leaving live ones alone', () => {
+    const states = new Map([['live', state()]]);
+    const warned = new Set(['stale1', 'stale2', 'live']);
+    pruneWarnedUnconfigured(warned, states);
+    expect([...warned]).toEqual(['live']);
   });
 });

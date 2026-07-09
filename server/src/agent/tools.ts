@@ -21,13 +21,13 @@ export const toolNames: string[] = [...byName.keys()];
 /** Execute a tool call by name; always returns a JSON string for the model. */
 export async function runTool(name: string, rawArgs: string, ctx: ToolContext): Promise<string> {
   const spec = byName.get(name);
-  if (!spec) return JSON.stringify({ error: `tool desconocida: ${name}` });
+  if (!spec) return JSON.stringify({ error: `unknown tool: ${name}` });
 
   let args: Record<string, unknown>;
   try {
     args = rawArgs ? (JSON.parse(rawArgs) as Record<string, unknown>) : {};
   } catch {
-    return JSON.stringify({ error: 'argumentos JSON inválidos', recibido: rawArgs });
+    return JSON.stringify({ error: 'invalid JSON arguments', received: rawArgs });
   }
 
   try {
@@ -36,8 +36,8 @@ export async function runTool(name: string, rawArgs: string, ctx: ToolContext): 
   } catch (err) {
     logger.error({ err, name, args }, 'tool handler threw');
     return JSON.stringify({
-      error: 'fallo interno ejecutando la tool',
-      detalle: err instanceof Error ? err.message : String(err),
+      error: 'internal error running the tool',
+      detail: err instanceof Error ? err.message : String(err),
     });
   }
 }

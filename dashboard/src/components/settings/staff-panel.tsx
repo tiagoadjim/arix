@@ -3,7 +3,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { toast } from 'sonner';
 import { KeyRoundIcon, Trash2Icon } from 'lucide-react';
-import { api } from '@/lib/api';
+import { api, apiErrorMessage } from '@/lib/api';
 import type { Agent } from '@/lib/types';
 import { interpolate } from '@/lib/i18n';
 import { useT } from '@/lib/i18n/provider';
@@ -71,7 +71,7 @@ export function StaffPanel() {
       toast.success(t.settings.staff.createdToast);
       await load();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : t.common.error);
+      toast.error(apiErrorMessage(err, t, t.common.error));
     } finally {
       setCreating(false);
     }
@@ -86,7 +86,7 @@ export function StaffPanel() {
       setDeleteTarget(null);
       await load();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : t.common.error);
+      toast.error(apiErrorMessage(err, t, t.common.error));
     } finally {
       setDeleting(false);
     }
@@ -111,7 +111,7 @@ export function StaffPanel() {
       setResetPassword('');
       setResetConfirm('');
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : t.common.error);
+      toast.error(apiErrorMessage(err, t, t.common.error));
     } finally {
       setResetting(false);
     }

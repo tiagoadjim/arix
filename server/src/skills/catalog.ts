@@ -3,10 +3,13 @@ import { woo as wooConfig, type WooSettings } from '../config/runtime';
 import { logger } from '../logger';
 import type { ToolSpec } from '../agent/tool-spec';
 
-const STOCK_ES: Record<string, string> = {
-  instock: 'en stock',
-  outofstock: 'sin stock',
-  onbackorder: 'a pedido',
+// Stable, language-neutral stock codes — the model reads these directly (the
+// persona prompt controls the REPLY language, not tool payload field names/
+// values, so these stay English regardless of the store's configured language).
+const STOCK_CODE: Record<string, string> = {
+  instock: 'in_stock',
+  outofstock: 'out_of_stock',
+  onbackorder: 'on_backorder',
 };
 
 function flavorsOf(product: WcProduct): string[] {
@@ -53,9 +56,9 @@ function variationSummary(v: WcVariation) {
   const flavor = v.attributes?.[0]?.option ?? null;
   return {
     sabor: flavor,
-    precio: v.price || v.regular_price || null,
-    stock: STOCK_ES[v.stock_status] ?? v.stock_status,
-    cantidad: v.stock_quantity,
+    price: v.price || v.regular_price || null,
+    stock: STOCK_CODE[v.stock_status] ?? v.stock_status,
+    quantity: v.stock_quantity,
   };
 }
 
@@ -101,12 +104,12 @@ export const catalogTools: ToolSpec[] = [
       for (const p of products.slice(0, 8)) {
         const base = {
           id: p.id,
-          nombre: p.name,
-          precio: p.price || p.regular_price || null,
-          moneda: wc.currency,
-          stock: STOCK_ES[p.stock_status] ?? p.stock_status,
-          categorias: p.categories?.map((c) => c.name) ?? [],
-          sabores: flavorsOf(p),
+          name: p.name,
+          price: p.price || p.regular_price || null,
+          currency: wc.currency,
+          stock: STOCK_CODE[p.stock_status] ?? p.stock_status,
+          categories: p.categories?.map((c) => c.name) ?? [],
+          variants: flavorsOf(p),
           link: productLink(p, wc),
           variaciones: undefined as unknown,
         };
@@ -122,7 +125,7 @@ export const catalogTools: ToolSpec[] = [
         out.push(base);
       }
 
-      return { cantidad: out.length, productos: out };
+      return { quantity: out.length, products: out };
     },
   },
 
@@ -156,12 +159,12 @@ export const catalogTools: ToolSpec[] = [
       }
       return {
         id: p.id,
-        nombre: p.name,
-        precio: p.price || p.regular_price || null,
-        moneda: wc.currency,
-        stock: STOCK_ES[p.stock_status] ?? p.stock_status,
+        name: p.name,
+        price: p.price || p.regular_price || null,
+        currency: wc.currency,
+        stock: STOCK_CODE[p.stock_status] ?? p.stock_status,
         descripcion: (p.short_description ?? '').replace(/<[^>]+>/g, '').trim() || null,
-        sabores: flavorsOf(p),
+        variants: flavorsOf(p),
         variaciones,
         link: productLink(p, wc),
       };

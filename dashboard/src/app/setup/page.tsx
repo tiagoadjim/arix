@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { toast } from 'sonner';
 import { CheckCircle2Icon } from 'lucide-react';
-import { api, type SettingDto } from '@/lib/api';
+import { api, apiErrorMessage, ApiError, type SettingDto } from '@/lib/api';
 import { interpolate, setLocaleCookie, type Locale } from '@/lib/i18n';
 import { useT } from '@/lib/i18n/provider';
 import { Logo } from '@/components/logo';
@@ -238,11 +238,10 @@ function AdminStep({ onCreated }: { onCreated: () => void }) {
       await api.setupAdmin({ name: name.trim(), email: email.trim(), password });
       onCreated();
     } catch (err) {
-      const message = err instanceof Error ? err.message : t.common.error;
-      // Coupled to the exact string server/src/api/server.ts's POST
+      // Coupled to the exact stable code server/src/api/server.ts's POST
       // /api/setup/admin returns on a 409 (setup already completed).
-      if (message === 'Setup has already been completed') setAlreadyDone(true);
-      else setError(message);
+      if (err instanceof ApiError && err.code === 'setup_already_completed') setAlreadyDone(true);
+      else setError(apiErrorMessage(err, t, t.common.error));
     } finally {
       setSubmitting(false);
     }
@@ -331,7 +330,7 @@ function ProviderStep({ dtos, onNext, onSkip }: { dtos?: SettingDto[]; onNext: (
       if (updates.length > 0) await api.saveSettings(updates);
       onNext();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : t.common.error);
+      toast.error(apiErrorMessage(err, t, t.common.error));
     } finally {
       setSaving(false);
     }
@@ -374,7 +373,7 @@ function StoreStep({
       if (updates.length > 0) await api.saveSettings(updates);
       onNext();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : t.common.error);
+      toast.error(apiErrorMessage(err, t, t.common.error));
     } finally {
       setSaving(false);
     }
@@ -431,7 +430,7 @@ function BusinessStep({
       }
       onNext();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : t.common.error);
+      toast.error(apiErrorMessage(err, t, t.common.error));
     } finally {
       setSaving(false);
     }

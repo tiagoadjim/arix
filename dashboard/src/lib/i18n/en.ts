@@ -1,6 +1,31 @@
 import type { Dictionary } from './index';
 
 export const en: Dictionary = {
+  errors: {
+    too_many_attempts: 'Too many attempts. Try again in a few minutes.',
+    invalid_email: 'Invalid email address.',
+    password_too_short: 'Password must be at least 8 characters.',
+    setup_already_completed: 'Initial setup has already been completed on this server.',
+    email_password_required: 'Email and password are required.',
+    invalid_credentials: 'Invalid credentials.',
+    unauthorized: 'Not authorized.',
+    already_connected: 'WhatsApp is already connected.',
+    conversation_not_found: 'Conversation not found.',
+    invalid_mode: 'Invalid mode.',
+    empty_message: 'Message cannot be empty.',
+    no_updates_provided: 'No changes to save.',
+    invalid_settings_keys: 'Unknown or read-only settings.',
+    staff_exists: 'A team member with that email already exists.',
+    cannot_delete_self: "You can't delete your own account.",
+    cannot_delete_last_staff: "You can't delete the last team member.",
+    staff_not_found: 'Team member not found.',
+    orders_fetch_failed: "Couldn't fetch orders.",
+    invalid_order_id: 'Invalid order id.',
+    invalid_status: 'Invalid status.',
+    order_status_update_failed: "Couldn't update the status in WooCommerce.",
+    missing_delivery_fields: 'Fill in the tracking link and the delivery code.',
+    internal_error: 'Something went wrong.',
+  },
   common: {
     save: 'Save',
     saving: 'Saving…',

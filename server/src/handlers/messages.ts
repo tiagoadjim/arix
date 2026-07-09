@@ -107,6 +107,20 @@ export function evictIdleStates(
 }
 
 /**
+ * Drop any `warned` (warnedUnconfigured) entry whose conversation ID no
+ * longer has a live entry in `states` — the fix for warnedUnconfigured
+ * growing forever alongside states (one entry per conversation ever warned
+ * about, never freed on its own). Run this AFTER evictIdleStates() in the
+ * same sweep, so an idle-evicted conversation's warning is pruned too. Pure +
+ * exported so it's unit-testable without a real gateway/timers.
+ */
+export function pruneWarnedUnconfigured(warned: Set<string>, states: Map<string, ConvState>): void {
+  for (const id of warned) {
+    if (!states.has(id)) warned.delete(id);
+  }
+}
+
+/**
  * True when the trailing run of unanswered customer messages is made up only of
  * stickers. We stay quiet in that case (a bare 👍 sticker doesn't need a reply),
  * but if the run also contains text/audio/etc. we answer and the sticker is just
@@ -179,10 +193,10 @@ export class MessageRouter {
   constructor(private readonly gateway: WhatsAppGateway) {
     // unref()'d so an idle sweep timer never keeps the process (or a test)
     // alive on its own.
-    this.sweepTimer = setInterval(
-      () => evictIdleStates(this.states, Date.now()),
-      STATE_SWEEP_INTERVAL_MS,
-    );
+    this.sweepTimer = setInterval(() => {
+      evictIdleStates(this.states, Date.now());
+      pruneWarnedUnconfigured(warnedUnconfigured, this.states);
+    }, STATE_SWEEP_INTERVAL_MS);
     this.sweepTimer.unref();
   }
 
@@ -340,6 +354,10 @@ export class MessageRouter {
         }
         return;
       }
+      // Once the LLM becomes configured, every prior "unconfigured" warning is
+      // moot — clear them all instead of leaving the set to only ever shrink
+      // one conversation at a time via pruneWarnedUnconfigured().
+      if (warnedUnconfigured.size > 0) warnedUnconfigured.clear();
 
       await this.gateway.indicateTyping(conv.wa_jid);
       const reply = await runAgent(ctx, history);

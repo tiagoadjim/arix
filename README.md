@@ -219,6 +219,7 @@ Planned, no committed dates:
 - Realtime (SSE) inbox, replacing polling
 - Usage/cost analytics panel
 - Additional messaging channels (evaluating)
+- Role-based staff permissions (admin vs agent)
 
 ## Contributing
 

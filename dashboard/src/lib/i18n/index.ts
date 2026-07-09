@@ -8,6 +8,13 @@ export type Weekday7<T> = readonly [T, T, T, T, T, T, T];
 
 /** Typed nested dictionary shape — every locale file must satisfy this exactly. */
 export interface Dictionary {
+  /**
+   * Stable, snake_case API error codes (see server/src/api/server.ts's
+   * `{ error: '<code>' }` responses) → localized message. Looked up via
+   * lib/api.ts's apiErrorMessage(); an unrecognized code falls back to the
+   * raw code string, so this map does not need to be exhaustive to be safe.
+   */
+  errors: Record<string, string>;
   common: {
     save: string;
     saving: string;

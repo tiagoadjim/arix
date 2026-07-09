@@ -1,4 +1,36 @@
 import type { Agent, Conversation, Message, Receipt, StaffOrder } from './types';
+import type { Dictionary } from './i18n';
+
+/**
+ * Thrown by jpost/jput/jdelete on a non-2xx response. `code` is the stable
+ * snake_case error code from the server's `{ error: '<code>' }` body (see
+ * server/src/api/server.ts) — never a human-readable string. Callers
+ * translate it via {@link apiErrorMessage} (which looks it up in
+ * `t.errors`) instead of rendering `.message` directly; `.message` here is
+ * only a fallback for the rare case the server didn't return a recognizable
+ * code at all.
+ */
+export class ApiError extends Error {
+  readonly code: string;
+  constructor(code: string) {
+    super(code);
+    this.name = 'ApiError';
+    this.code = code;
+  }
+}
+
+/**
+ * Localizes an error thrown by the api/jpost/jput/jdelete helpers for
+ * display (toast, inline form error, etc.): a known {@link ApiError} code is
+ * translated via `t.errors`, an unknown code falls back to the raw code
+ * (still readable, just untranslated), and any other failure (network error,
+ * etc.) falls back to `.message` or the given `fallback`.
+ */
+export function apiErrorMessage(err: unknown, t: Dictionary, fallback: string): string {
+  if (err instanceof ApiError) return t.errors[err.code] ?? err.code;
+  if (err instanceof Error) return err.message;
+  return fallback;
+}
 
 async function jget<T>(url: string): Promise<T> {
   const res = await fetch(url, { credentials: 'same-origin' });
@@ -22,7 +54,7 @@ async function jpost<T>(url: string, body?: unknown): Promise<T> {
   });
   if (!res.ok) {
     const data = (await res.json().catch(() => ({}))) as { error?: string };
-    throw new Error(data.error ?? `POST ${url} → ${res.status}`);
+    throw new ApiError(data.error ?? `http_${res.status}`);
   }
   return res.json() as Promise<T>;
 }
@@ -32,7 +64,9 @@ async function jpost<T>(url: string, body?: unknown): Promise<T> {
  * credential-test endpoints always respond with a `{ok, error?, ...}` body
  * (200 for a rejected credential, 400 for a malformed request), so the
  * caller can check `.ok` uniformly instead of juggling try/catch AND a
- * result flag.
+ * result flag. Those endpoints' `error` is already a safe, human-readable
+ * English sentence (see safeLlmTestError/safeWooTestError server-side) —
+ * NOT a stable code — so it's rendered as-is, never through apiErrorMessage.
  */
 async function jpostLenient<T>(url: string, body?: unknown): Promise<T> {
   const res = await fetch(url, {
@@ -53,7 +87,7 @@ async function jput<T>(url: string, body: unknown): Promise<T> {
   });
   if (!res.ok) {
     const data = (await res.json().catch(() => ({}))) as { error?: string };
-    throw new Error(data.error ?? `PUT ${url} → ${res.status}`);
+    throw new ApiError(data.error ?? `http_${res.status}`);
   }
   return res.json() as Promise<T>;
 }
@@ -62,7 +96,7 @@ async function jdelete<T>(url: string): Promise<T> {
   const res = await fetch(url, { method: 'DELETE', credentials: 'same-origin' });
   if (!res.ok) {
     const data = (await res.json().catch(() => ({}))) as { error?: string };
-    throw new Error(data.error ?? `DELETE ${url} → ${res.status}`);
+    throw new ApiError(data.error ?? `http_${res.status}`);
   }
   return res.json() as Promise<T>;
 }
@@ -158,7 +192,7 @@ export const api = {
   deleteStaff: (id: string) => jdelete<{ ok: boolean }>(`/api/staff/${id}`),
   resetStaffPassword: (id: string, password: string) => jpost<{ ok: boolean }>(`/api/staff/${id}/password`, { password }),
 
-  // ---- pedidos: cambio de estado + envío Uber Moto ----
+  // ---- orders: status change + delivery tracking message ----
   updateOrderStatus: (convId: string, orderId: number, status: string) =>
     jpost<{ order: StaffOrder }>(`/api/conversations/${convId}/orders/${orderId}/status`, { status }),
   sendDelivery: (convId: string, orderId: number, payload: { trackingUrl: string; deliveryCode: string; orderNumber: string }) =>

@@ -57,7 +57,11 @@ services:
 
   dashboard:
     build:
-      context: ./dashboard
+      # Repo root, not ./dashboard: the Dockerfile needs the root
+      # pnpm-lock.yaml/pnpm-workspace.yaml for a workspace-aware, frozen-
+      # lockfile install (mirrors the server service above).
+      context: .
+      dockerfile: dashboard/Dockerfile
     image: arix-dashboard
     env_file: .env
     environment:

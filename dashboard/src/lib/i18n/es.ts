@@ -1,6 +1,31 @@
 import type { Dictionary } from './index';
 
 export const es: Dictionary = {
+  errors: {
+    too_many_attempts: 'Demasiados intentos. Probá de nuevo en unos minutos.',
+    invalid_email: 'Email inválido.',
+    password_too_short: 'La contraseña debe tener al menos 8 caracteres.',
+    setup_already_completed: 'La configuración inicial ya se completó en este servidor.',
+    email_password_required: 'Email y contraseña requeridos.',
+    invalid_credentials: 'Credenciales inválidas.',
+    unauthorized: 'No autorizado.',
+    already_connected: 'WhatsApp ya está conectado.',
+    conversation_not_found: 'Conversación no encontrada.',
+    invalid_mode: 'Modo inválido.',
+    empty_message: 'El mensaje no puede estar vacío.',
+    no_updates_provided: 'No hay cambios para guardar.',
+    invalid_settings_keys: 'Configuración desconocida o de solo lectura.',
+    staff_exists: 'Ya existe un integrante con ese email.',
+    cannot_delete_self: 'No podés eliminarte a vos mismo.',
+    cannot_delete_last_staff: 'No podés eliminar el último integrante.',
+    staff_not_found: 'Integrante no encontrado.',
+    orders_fetch_failed: 'No se pudieron traer los pedidos.',
+    invalid_order_id: 'Id de pedido inválido.',
+    invalid_status: 'Estado inválido.',
+    order_status_update_failed: 'No se pudo actualizar el estado en WooCommerce.',
+    missing_delivery_fields: 'Completá el enlace de seguimiento y el código de entrega.',
+    internal_error: 'Ocurrió un error.',
+  },
   common: {
     save: 'Guardar',
     saving: 'Guardando…',

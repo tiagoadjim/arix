@@ -2,7 +2,7 @@ import { woo } from '../integrations/woocommerce';
 import { woo as wooConfig } from '../config/runtime';
 import { insertReceipt } from '../db/repo';
 import { logger } from '../logger';
-import { STATUS_ES, checkIdentity, persistVerifiedEmail } from './orders';
+import { checkIdentity, persistVerifiedEmail } from './orders';
 import type { ToolSpec } from '../agent/tool-spec';
 import type { ReceiptMatchStatus, ToolContext } from '../types';
 
@@ -114,11 +114,11 @@ export const paymentTools: ToolSpec[] = [
       const wc = await wooConfig();
       const decimalHint = decimalHintForCurrency(wc.currency);
       const receiptAmount = parseAmount(args.receipt_amount as number | string, decimalHint);
-      if (!orderNumber) return { ok: false, motivo: 'falta_numero_orden' };
-      if (receiptAmount == null || receiptAmount <= 0) return { ok: false, motivo: 'monto_invalido' };
+      if (!orderNumber) return { ok: false, reason: 'missing_order_number' };
+      if (receiptAmount == null || receiptAmount <= 0) return { ok: false, reason: 'invalid_amount' };
 
       const order = await woo.resolveOrderByNumber(orderNumber);
-      if (!order) return { ok: false, motivo: 'orden_no_encontrada', numero: orderNumber };
+      if (!order) return { ok: false, reason: 'order_not_found', numero: orderNumber };
 
       const total = parseAmount(order.total, decimalHint);
       const mediaUrl = ctx.lastImage?.mediaUrl ?? null;
@@ -149,7 +149,7 @@ export const paymentTools: ToolSpec[] = [
           'mismatch',
           id.emailProvided ? 'Email no coincide con la orden.' : 'Identidad no verificada (teléfono distinto, falta email).',
         );
-        return { ok: false, motivo: id.emailProvided ? 'identidad_no_verificable' : 'pedir_email' };
+        return { ok: false, reason: id.emailProvided ? 'identity_not_verifiable' : 'ask_email' };
       }
       await persistVerifiedEmail(ctx, id, email);
 
@@ -159,8 +159,9 @@ export const paymentTools: ToolSpec[] = [
         return {
           ok: true,
           ya_confirmada: true,
+          // Raw WooCommerce status code — no Spanish label (see orders.ts's
+          // STATUS_ES docstring).
           estado: order.status,
-          estado_texto: STATUS_ES[order.status] ?? order.status,
           total: order.total,
           moneda: order.currency,
         };
@@ -173,22 +174,21 @@ export const paymentTools: ToolSpec[] = [
         await record('mismatch', `Estado de orden no confirmable: ${order.status}.`);
         return {
           ok: false,
-          motivo: 'orden_no_confirmable',
+          reason: 'order_not_confirmable',
           estado: order.status,
-          estado_texto: STATUS_ES[order.status] ?? order.status,
         };
       }
 
       if (total == null) {
         await record('unreadable', 'No se pudo interpretar el total de la orden.');
-        return { ok: false, motivo: 'no_se_pudo_leer_total_orden' };
+        return { ok: false, reason: 'order_total_unreadable' };
       }
 
       if (!amountsMatch(total, receiptAmount, wc.tolerance)) {
         await record('mismatch', `Monto comprobante ${receiptAmount} ≠ total ${total}.`);
         return {
           ok: false,
-          motivo: 'monto_no_coincide',
+          reason: 'amount_mismatch',
           total: order.total,
           moneda: order.currency,
           receipt_amount: receiptAmount,
@@ -205,7 +205,6 @@ export const paymentTools: ToolSpec[] = [
           ok: true,
           confirmada: true,
           estado: updated.status,
-          estado_texto: STATUS_ES[updated.status] ?? updated.status,
           total: order.total,
           moneda: order.currency,
           receipt_amount: receiptAmount,
@@ -214,7 +213,7 @@ export const paymentTools: ToolSpec[] = [
       } catch (err) {
         await record('match', 'Monto coincide pero falló el cambio de estado en WooCommerce.');
         logger.error({ err, orderId: order.id }, 'failed to update order status');
-        return { ok: false, motivo: 'error_actualizando_orden' };
+        return { ok: false, reason: 'order_update_failed' };
       }
     },
   },

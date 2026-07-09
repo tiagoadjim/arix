@@ -14,6 +14,7 @@ import {
   getResolvedWithMeta,
   envLockedKeys,
   setupCompleted,
+  businessProfile,
 } from '../config/runtime';
 import { encryptSecret } from '../config/secret';
 import { PROVIDERS, type ProviderSpec } from '../agent/llm/providers';
@@ -22,6 +23,7 @@ import {
   normalizeSettingsUpdates,
   validateSettingsUpdates,
   coerceForStorage,
+  isNoOpSecretUpdate,
 } from './settings-dto';
 import {
   orderForStaff,
@@ -139,7 +141,7 @@ export function createApiServer(deps: { gateway: WhatsAppGateway }) {
       // posted email.
       const throttleKey = 'setup-admin';
       if (loginThrottled(throttleKey)) {
-        res.status(429).json({ error: 'Too many attempts. Try again in a few minutes.' });
+        res.status(429).json({ error: 'too_many_attempts' });
         return;
       }
       const name = String(req.body?.name ?? '').trim() || null;
@@ -147,19 +149,19 @@ export function createApiServer(deps: { gateway: WhatsAppGateway }) {
       const password = String(req.body?.password ?? '');
       if (!EMAIL_RE.test(email)) {
         recordLoginFail(throttleKey);
-        res.status(400).json({ error: 'Invalid email address' });
+        res.status(400).json({ error: 'invalid_email' });
         return;
       }
       if (password.length < MIN_PASSWORD_LEN) {
         recordLoginFail(throttleKey);
-        res.status(400).json({ error: `Password must be at least ${MIN_PASSWORD_LEN} characters` });
+        res.status(400).json({ error: 'password_too_short' });
         return;
       }
       const hash = await bcrypt.hash(password, 10);
       const staff = await repo.createFirstAdmin(email, hash, name);
       if (!staff) {
         recordLoginFail(throttleKey);
-        res.status(409).json({ error: 'Setup has already been completed' });
+        res.status(409).json({ error: 'setup_already_completed' });
         return;
       }
       loginFails.delete(throttleKey);
@@ -182,11 +184,11 @@ export function createApiServer(deps: { gateway: WhatsAppGateway }) {
       const email = String(req.body?.email ?? '').trim().toLowerCase();
       const password = String(req.body?.password ?? '');
       if (!email || !password) {
-        res.status(400).json({ error: 'Email y contraseña requeridos' });
+        res.status(400).json({ error: 'email_password_required' });
         return;
       }
       if (loginThrottled(email)) {
-        res.status(429).json({ error: 'Demasiados intentos. Probá de nuevo en unos minutos.' });
+        res.status(429).json({ error: 'too_many_attempts' });
         return;
       }
       const staff = await repo.getStaffByEmail(email);
@@ -194,7 +196,7 @@ export function createApiServer(deps: { gateway: WhatsAppGateway }) {
       const ok = await bcrypt.compare(password, staff?.password_hash ?? DUMMY_HASH);
       if (!staff || !ok) {
         recordLoginFail(email);
-        res.status(401).json({ error: 'Credenciales inválidas' });
+        res.status(401).json({ error: 'invalid_credentials' });
         return;
       }
       loginFails.delete(email);
@@ -222,7 +224,7 @@ export function createApiServer(deps: { gateway: WhatsAppGateway }) {
     // Re-validate against the DB so a deleted/disabled staff member is revoked
     // immediately (the JWT alone would stay valid until expiry).
     if (!user || !(await repo.getStaffById(user.id))) {
-      res.status(401).json({ error: 'No autorizado' });
+      res.status(401).json({ error: 'unauthorized' });
       return;
     }
     req.user = user;
@@ -339,11 +341,17 @@ export function createApiServer(deps: { gateway: WhatsAppGateway }) {
     requireAuth,
     ah(async (req, res) => {
       const force = req.body?.force === true;
-      if (deps.gateway.connected && !force) {
+      const wasConnected = deps.gateway.connected;
+      if (wasConnected && !force) {
         res.status(409).json({ error: 'already_connected' });
         return;
       }
-      await deps.gateway.restart();
+      // A forced restart of an ALREADY connected/paired session must actually
+      // invalidate the pairing (clearSession) to get a genuinely new QR —
+      // otherwise Baileys just reconnects with the same stored creds and no
+      // QR is ever emitted. A restart while still awaiting pairing (not yet
+      // connected) just needs a fresh QR for the in-progress session.
+      await deps.gateway.restart(wasConnected ? { clearSession: true } : {});
       res.json({ ok: true, whatsapp: whatsappStatus(deps.gateway) });
     }),
   );
@@ -374,7 +382,7 @@ export function createApiServer(deps: { gateway: WhatsAppGateway }) {
       const id = req.params.id as string;
       const conv = await repo.getConversation(id);
       if (!conv) {
-        res.status(404).json({ error: 'Conversación no encontrada' });
+        res.status(404).json({ error: 'conversation_not_found' });
         return;
       }
       const [messages, receipts] = await Promise.all([
@@ -402,7 +410,7 @@ export function createApiServer(deps: { gateway: WhatsAppGateway }) {
     ah(async (req, res) => {
       const mode = req.body?.mode;
       if (mode !== 'bot' && mode !== 'human') {
-        res.status(400).json({ error: 'mode inválido' });
+        res.status(400).json({ error: 'invalid_mode' });
         return;
       }
       const id = req.params.id as string;
@@ -421,12 +429,12 @@ export function createApiServer(deps: { gateway: WhatsAppGateway }) {
     ah(async (req, res) => {
       const body = String(req.body?.body ?? '').trim();
       if (!body) {
-        res.status(400).json({ error: 'Mensaje vacío' });
+        res.status(400).json({ error: 'empty_message' });
         return;
       }
       const conv = await repo.getConversation(req.params.id as string);
       if (!conv) {
-        res.status(404).json({ error: 'Conversación no encontrada' });
+        res.status(404).json({ error: 'conversation_not_found' });
         return;
       }
       const user = req.user!;
@@ -472,23 +480,28 @@ export function createApiServer(deps: { gateway: WhatsAppGateway }) {
       // still sends the latter.
       const inputs = normalizeSettingsUpdates(req.body);
       if (inputs.length === 0) {
-        res.status(400).json({ error: 'No updates provided' });
+        res.status(400).json({ error: 'no_updates_provided' });
         return;
       }
       const validated = validateSettingsUpdates(inputs, new Set(envLockedKeys()));
       if (!validated.ok) {
         res.status(400).json({
-          error: 'Unknown or read-only (env-locked) settings keys',
+          error: 'invalid_settings_keys',
           keys: validated.offenders,
         });
         return;
       }
       try {
         await Promise.all(
-          validated.updates.map(({ entry, raw }) => {
-            const stored = coerceForStorage(entry, raw);
-            return repo.upsertSetting(entry.key, entry.secret ? encryptSecret(stored) : stored);
-          }),
+          validated.updates
+            // An empty/null/undefined value for a `secret: true` key means
+            // "keep the currently stored secret" — never overwrite it with
+            // blank, and never treat it as an error (see isNoOpSecretUpdate).
+            .filter(({ entry, raw }) => !isNoOpSecretUpdate(entry, raw))
+            .map(({ entry, raw }) => {
+              const stored = coerceForStorage(entry, raw);
+              return repo.upsertSetting(entry.key, entry.secret ? encryptSecret(stored) : stored);
+            }),
         );
       } finally {
         // Always invalidate, even on partial failure: Promise.all doesn't
@@ -517,19 +530,23 @@ export function createApiServer(deps: { gateway: WhatsAppGateway }) {
       const email = String(req.body?.email ?? '').trim().toLowerCase();
       const password = String(req.body?.password ?? '');
       if (!EMAIL_RE.test(email)) {
-        res.status(400).json({ error: 'Email inválido' });
+        res.status(400).json({ error: 'invalid_email' });
         return;
       }
       if (password.length < MIN_PASSWORD_LEN) {
-        res.status(400).json({ error: `La contraseña debe tener al menos ${MIN_PASSWORD_LEN} caracteres` });
-        return;
-      }
-      if (await repo.getStaffByEmail(email)) {
-        res.status(409).json({ error: 'Ya existe un agente con ese email' });
+        res.status(400).json({ error: 'password_too_short' });
         return;
       }
       const hash = await bcrypt.hash(password, 10);
-      const staff = await repo.createStaff(email, hash, name);
+      // Atomic INSERT ... ON CONFLICT DO NOTHING (see createStaffStrict) instead
+      // of a getStaffByEmail pre-check: a pre-check + insert has a race window
+      // where two concurrent requests for the same email could both pass the
+      // check before either commits.
+      const staff = await repo.createStaffStrict(email, hash, name);
+      if (!staff) {
+        res.status(409).json({ error: 'staff_exists' });
+        return;
+      }
       res.status(201).json({ id: staff.id, email: staff.email, name: staff.name });
     }),
   );
@@ -541,15 +558,15 @@ export function createApiServer(deps: { gateway: WhatsAppGateway }) {
       const id = req.params.id as string;
       const user = req.user!;
       if (id === user.id) {
-        res.status(400).json({ error: 'No podés eliminarte a vos mismo' });
+        res.status(400).json({ error: 'cannot_delete_self' });
         return;
       }
       if ((await repo.countStaff()) <= 1) {
-        res.status(400).json({ error: 'No podés eliminar el último agente' });
+        res.status(400).json({ error: 'cannot_delete_last_staff' });
         return;
       }
       if (!(await repo.getStaffById(id))) {
-        res.status(404).json({ error: 'Agente no encontrado' });
+        res.status(404).json({ error: 'staff_not_found' });
         return;
       }
       await repo.deleteStaff(id);
@@ -564,11 +581,11 @@ export function createApiServer(deps: { gateway: WhatsAppGateway }) {
       const id = req.params.id as string;
       const password = String(req.body?.password ?? '');
       if (password.length < MIN_PASSWORD_LEN) {
-        res.status(400).json({ error: `La contraseña debe tener al menos ${MIN_PASSWORD_LEN} caracteres` });
+        res.status(400).json({ error: 'password_too_short' });
         return;
       }
       if (!(await repo.getStaffById(id))) {
-        res.status(404).json({ error: 'Agente no encontrado' });
+        res.status(404).json({ error: 'staff_not_found' });
         return;
       }
       const hash = await bcrypt.hash(password, 10);
@@ -585,7 +602,7 @@ export function createApiServer(deps: { gateway: WhatsAppGateway }) {
       const id = req.params.id as string;
       const conv = await repo.getConversation(id);
       if (!conv) {
-        res.status(404).json({ error: 'Conversación no encontrada' });
+        res.status(404).json({ error: 'conversation_not_found' });
         return;
       }
       const byId = new Map<number, WcOrder>();
@@ -596,7 +613,7 @@ export function createApiServer(deps: { gateway: WhatsAppGateway }) {
         }
       } catch (err) {
         logger.error({ err, id }, 'failed to fetch customer orders');
-        res.status(502).json({ error: 'No se pudieron traer las órdenes', orders: [] });
+        res.status(502).json({ error: 'orders_fetch_failed', orders: [] });
         return;
       }
       const orders = [...byId.values()]
@@ -615,11 +632,11 @@ export function createApiServer(deps: { gateway: WhatsAppGateway }) {
       const orderId = Number(req.params.orderId);
       const status = String(req.body?.status ?? '').trim();
       if (!Number.isFinite(orderId)) {
-        res.status(400).json({ error: 'orderId inválido' });
+        res.status(400).json({ error: 'invalid_order_id' });
         return;
       }
       if (!STATUS_ES[status]) {
-        res.status(400).json({ error: 'Estado inválido' });
+        res.status(400).json({ error: 'invalid_status' });
         return;
       }
       try {
@@ -627,12 +644,12 @@ export function createApiServer(deps: { gateway: WhatsAppGateway }) {
         res.json({ order: orderForStaff(updated) });
       } catch (err) {
         logger.error({ err, orderId, status }, 'failed to update order status');
-        res.status(502).json({ error: 'No se pudo cambiar el estado en WooCommerce' });
+        res.status(502).json({ error: 'order_status_update_failed' });
       }
     }),
   );
 
-  // ---- send the Uber Moto tracking link + delivery code to the customer ----
+  // ---- send the tracking link + delivery code to the customer ----
   app.post(
     '/api/conversations/:id/orders/:orderId/delivery',
     requireAuth,
@@ -642,20 +659,21 @@ export function createApiServer(deps: { gateway: WhatsAppGateway }) {
       const deliveryCode = String(req.body?.deliveryCode ?? '').trim();
       const orderNumber = String(req.body?.orderNumber ?? '').trim() || String(orderId);
       if (!Number.isFinite(orderId)) {
-        res.status(400).json({ error: 'orderId inválido' });
+        res.status(400).json({ error: 'invalid_order_id' });
         return;
       }
       if (!trackingUrl || !deliveryCode) {
-        res.status(400).json({ error: 'Faltan el enlace de seguimiento o el código de entrega' });
+        res.status(400).json({ error: 'missing_delivery_fields' });
         return;
       }
       const conv = await repo.getConversation(req.params.id as string);
       if (!conv) {
-        res.status(404).json({ error: 'Conversación no encontrada' });
+        res.status(404).json({ error: 'conversation_not_found' });
         return;
       }
       const user = req.user!;
-      const template = (await dispatchTemplate()).trim() || DEFAULT_DELIVERY_TEMPLATE;
+      const profile = await businessProfile();
+      const template = (await dispatchTemplate()).trim() || DEFAULT_DELIVERY_TEMPLATE[profile.language];
       const body = buildDeliveryMessage(template, {
         numero: orderNumber,
         link: trackingUrl,
@@ -671,7 +689,7 @@ export function createApiServer(deps: { gateway: WhatsAppGateway }) {
       } catch (err) {
         sendStatus = 'failed';
         error = err instanceof Error ? err.message : String(err);
-        logger.error({ err, conversationId: conv.id }, 'failed to send Uber delivery message');
+        logger.error({ err, conversationId: conv.id }, 'failed to send delivery tracking message');
       }
       const message = await repo.insertOutboundMessage({
         conversationId: conv.id,
@@ -724,7 +742,7 @@ export function createApiServer(deps: { gateway: WhatsAppGateway }) {
   // error handler
   app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
     logger.error({ err }, 'API error');
-    if (!res.headersSent) res.status(500).json({ error: 'Error interno' });
+    if (!res.headersSent) res.status(500).json({ error: 'internal_error' });
   });
 
   return app;

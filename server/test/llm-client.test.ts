@@ -86,6 +86,11 @@ describe('getLlm()', () => {
       expect.objectContaining({ baseURL: 'https://custom.example.com/v1' }),
     );
   });
+
+  it('constructs the OpenAI client with a bounded timeout (SDK default of 600s is unacceptable)', async () => {
+    await getLlm();
+    expect(OpenAIMock).toHaveBeenCalledWith(expect.objectContaining({ timeout: 60_000 }));
+  });
 });
 
 describe('chatComplete() retry behavior', () => {

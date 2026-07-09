@@ -63,28 +63,28 @@ describe('confirm_payment', () => {
     expect(res.identidad_verificada).toBe(true);
   });
 
-  it('asks for email (pedir_email) when phone does not match and no email given', async () => {
+  it('asks for email (reason: ask_email) when phone does not match and no email given', async () => {
     resolveOrderByNumber.mockResolvedValue(order());
     const res = await confirmar({ order_number: '1042', receipt_amount: 15400 }, ctxWith('5499999999999'));
     expect(res.ok).toBe(false);
-    expect(res.motivo).toBe('pedir_email');
+    expect(res.reason).toBe('ask_email');
     expect(updateOrderStatus).not.toHaveBeenCalled();
   });
 
   it('asks for email when the chat phone is unknown', async () => {
     resolveOrderByNumber.mockResolvedValue(order());
     const res = await confirmar({ order_number: '1042', receipt_amount: 15400 }, ctxWith(null));
-    expect(res.motivo).toBe('pedir_email');
+    expect(res.reason).toBe('ask_email');
   });
 
-  it('rejects (identidad_no_verificable) when phone and email both wrong', async () => {
+  it('rejects (reason: identity_not_verifiable) when phone and email both wrong', async () => {
     resolveOrderByNumber.mockResolvedValue(order());
     const res = await confirmar(
       { order_number: '1042', receipt_amount: 15400, email: 'otro@mail.com' },
       ctxWith('5499999999999'),
     );
     expect(res.ok).toBe(false);
-    expect(res.motivo).toBe('identidad_no_verificable');
+    expect(res.reason).toBe('identity_not_verifiable');
     expect(updateOrderStatus).not.toHaveBeenCalled();
   });
 
@@ -92,7 +92,7 @@ describe('confirm_payment', () => {
     resolveOrderByNumber.mockResolvedValue(order({ status: 'refunded' }));
     const res = await confirmar({ order_number: '1042', receipt_amount: 15400 }, ctxWith('5491112345678'));
     expect(res.ok).toBe(false);
-    expect(res.motivo).toBe('orden_no_confirmable');
+    expect(res.reason).toBe('order_not_confirmable');
     expect(updateOrderStatus).not.toHaveBeenCalled();
   });
 
@@ -100,14 +100,14 @@ describe('confirm_payment', () => {
     resolveOrderByNumber.mockResolvedValue(order());
     const res = await confirmar({ order_number: '1042', receipt_amount: 99999 }, ctxWith('5491112345678'));
     expect(res.ok).toBe(false);
-    expect(res.motivo).toBe('monto_no_coincide');
+    expect(res.reason).toBe('amount_mismatch');
     expect(updateOrderStatus).not.toHaveBeenCalled();
   });
 
-  it('reports orden_no_encontrada when the order does not resolve', async () => {
+  it('reports reason: order_not_found when the order does not resolve', async () => {
     resolveOrderByNumber.mockResolvedValue(null);
     const res = await confirmar({ order_number: 'zzz', receipt_amount: 15400 }, ctxWith('5491112345678'));
     expect(res.ok).toBe(false);
-    expect(res.motivo).toBe('orden_no_encontrada');
+    expect(res.reason).toBe('order_not_found');
   });
 });

@@ -150,8 +150,40 @@ export class WhatsAppGateway {
    * again, and start()'s own teardown-then-connect plus its `starting`
    * re-entrancy guard are reused as-is, so a manual restart can never race a
    * concurrent automatic reconnect into a double-socket state.
+   *
+   * `clearSession: true` (the "generate new QR" flow, used when a session is
+   * still paired) actually invalidates the current pairing instead of just
+   * reconnecting with the same stored creds — otherwise a paired session
+   * would never yield a new QR at all. It: (1) best-effort `sock.logout()`
+   * so WhatsApp treats the device as unlinked server-side too, (2) clears our
+   * own persisted auth state via the SAME `clearState` the
+   * `DisconnectReason.loggedOut` branch in handleClose() uses (never
+   * duplicated), then (3) starts fresh so Baileys emits a brand-new QR.
+   * `this.stopped = true` for the duration guards against handleClose()
+   * double-handling the close event that logout() itself triggers (which
+   * would otherwise race its own loggedOut-branch clearState() + reconnect
+   * against this one).
    */
-  async restart(): Promise<void> {
+  async restart(opts: { clearSession?: boolean } = {}): Promise<void> {
+    if (opts.clearSession) {
+      this.stopped = true;
+      if (this.reconnectTimer) {
+        clearTimeout(this.reconnectTimer);
+        this.reconnectTimer = null;
+      }
+      if (this.sock) {
+        try {
+          await this.sock.logout();
+        } catch (err) {
+          logger.warn({ err }, 'WhatsApp logout() failed during a forced restart — clearing the local session anyway');
+        }
+      }
+      try {
+        await this.clearState?.();
+      } catch (err) {
+        logger.warn({ err }, 'failed to clear persisted WhatsApp auth state during a forced restart');
+      }
+    }
     this.stopped = false;
     this.reconnectAttempts = 0;
     await this.start();

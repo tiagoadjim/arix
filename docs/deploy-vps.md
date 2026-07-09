@@ -1,7 +1,7 @@
 # Deploying Arix to a VPS
 
 A minimal, production-safe deployment: Docker Compose for Arix itself, Caddy
-in front for automatic HTTPS. No Kubernetes, no separate load balancer —
+in front for automatic HTTPS. No K8s, no separate load balancer —
 this is meant for a single VPS.
 
 ## Requirements

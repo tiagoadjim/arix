@@ -137,12 +137,8 @@ insert into settings (key, value) values
   ('envios', ''),
   ('info_general', ''),
   ('compliance_rules', ''),
-  ('uber_envio_template',
-   '🛵 ¡Tu pedido #{numero} ya salió para entrega!
-
-Seguí al repartidor en tiempo real acá:
-{link}
-
-Tu código de entrega es: *{codigo}*
-Decíselo al repartidor cuando llegue para recibir tu pedido. ¡Gracias por tu compra! 💚')
+  -- Blank: no built-in courier/brand-specific message ships by default. The
+  -- agent falls back to a neutral, language-aware template at send time (see
+  -- skills/orders.ts's DEFAULT_DELIVERY_TEMPLATE) when this is empty.
+  ('envio_template', '')
 on conflict (key) do nothing;

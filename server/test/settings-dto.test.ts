@@ -5,6 +5,7 @@ import {
   normalizeSettingsUpdates,
   coerceForStorage,
   validateSettingsUpdates,
+  isNoOpSecretUpdate,
   type SettingDto,
 } from '../src/api/settings-dto';
 import { SETTINGS_BY_KEY, SETTINGS_SCHEMA } from '../src/config/settings-schema';
@@ -169,6 +170,23 @@ describe('coerceForStorage', () => {
 
   it('stores a plain string as-is', () => {
     expect(coerceForStorage(entry('business.name'), 'Acme Vapes')).toBe('Acme Vapes');
+  });
+});
+
+describe('isNoOpSecretUpdate', () => {
+  it('is true for a secret key with an empty string, null, or undefined value', () => {
+    expect(isNoOpSecretUpdate(entry('llm.api_key'), '')).toBe(true);
+    expect(isNoOpSecretUpdate(entry('llm.api_key'), null)).toBe(true);
+    expect(isNoOpSecretUpdate(entry('llm.api_key'), undefined)).toBe(true);
+  });
+
+  it('is false for a secret key with a non-empty value', () => {
+    expect(isNoOpSecretUpdate(entry('llm.api_key'), 'sk-new-value')).toBe(false);
+  });
+
+  it('is false for a non-secret key even with an empty value (explicit clear is legitimate)', () => {
+    expect(isNoOpSecretUpdate(entry('business.name'), '')).toBe(false);
+    expect(isNoOpSecretUpdate(entry('business.name'), null)).toBe(false);
   });
 });
 

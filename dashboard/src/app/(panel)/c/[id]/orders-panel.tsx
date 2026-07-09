@@ -3,7 +3,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { toast } from 'sonner';
 import { RefreshCwIcon, TruckIcon } from 'lucide-react';
-import { api } from '@/lib/api';
+import { api, apiErrorMessage } from '@/lib/api';
 import type { StaffOrder } from '@/lib/types';
 import { useT } from '@/lib/i18n/provider';
 import { formatDate } from '@/lib/format';
@@ -65,7 +65,7 @@ export function OrdersPanel({ conversationId, orders, state, onReload }: OrdersP
       toast.success(t.conversation.statusChanged);
       await onReload();
     } catch (err) {
-      toast.error(t.conversation.statusChangeFailed, { description: err instanceof Error ? err.message : undefined });
+      toast.error(t.conversation.statusChangeFailed, { description: apiErrorMessage(err, t, t.conversation.statusChangeFailed) });
     } finally {
       setBusy((b) => ({ ...b, [o.id]: false }));
     }
@@ -100,7 +100,7 @@ export function OrdersPanel({ conversationId, orders, state, onReload }: OrdersP
           <div key={o.numero} className="rounded-md border border-border bg-muted/40 p-3 text-sm">
             <div className="flex items-center justify-between gap-2 font-medium">
               <span>#{o.numero}</span>
-              <Badge variant={SUCCESS_STATUSES.has(o.estado) ? 'success' : 'outline'}>{statusLabel(o.estado, o.estado_texto)}</Badge>
+              <Badge variant={SUCCESS_STATUSES.has(o.estado) ? 'success' : 'outline'}>{statusLabel(o.estado, o.estado)}</Badge>
             </div>
             <p className="mt-1 text-xs text-muted-foreground">
               {formatDate(o.fecha, locale)} · {o.total} {o.moneda}
@@ -201,7 +201,7 @@ function DispatchDialog({ order, conversationId, onOpenChange, onSent }: Dispatc
       onOpenChange(false);
       await onSent();
     } catch (err) {
-      toast.error(t.conversation.dispatchFailed, { description: err instanceof Error ? err.message : undefined });
+      toast.error(t.conversation.dispatchFailed, { description: apiErrorMessage(err, t, t.conversation.dispatchFailed) });
     } finally {
       setSending(false);
     }

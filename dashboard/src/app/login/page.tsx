@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { AlertCircleIcon } from 'lucide-react';
-import { login } from '@/lib/api';
+import { login, apiErrorMessage } from '@/lib/api';
 import { Logo } from '@/components/logo';
 import { useT } from '@/lib/i18n/provider';
 import { Button } from '@/components/ui/button';
@@ -29,7 +29,7 @@ export default function LoginPage() {
       router.push('/');
       router.refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : t.login.errorGeneric);
+      setError(apiErrorMessage(err, t, t.login.errorGeneric));
     } finally {
       setLoading(false);
     }

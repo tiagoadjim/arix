@@ -1,15 +1,13 @@
-# Docker build context for the server image is the repo root (see
-# docker-compose.yml's `server.build` and server/Dockerfile) — needed so that
-# Dockerfile can COPY the root pnpm-lock.yaml/pnpm-workspace.yaml for a
-# workspace-aware, frozen-lockfile install of just @arix/server. Everything
-# below is either irrelevant to that image or something that should never be
-# baked into a layer.
-#
-# The dashboard image builds from its own context (./dashboard) with its own
-# dashboard/.dockerignore — unaffected by this file.
-
-# Unrelated workspace member — the server image never needs it.
-dashboard
+# Docker build context for BOTH the server and dashboard images is the repo
+# root (see docker-compose.yml's `server.build`/`dashboard.build` and
+# server/Dockerfile / dashboard/Dockerfile) — needed so each Dockerfile can
+# COPY the root pnpm-lock.yaml/pnpm-workspace.yaml for a workspace-aware,
+# frozen-lockfile install of just that one package. Everything below is
+# either irrelevant to both images or something that should never be baked
+# into a layer. Neither Dockerfile does a blanket `COPY . .`, so this file is
+# a context-size/leak-prevention measure, not a correctness requirement —
+# but it must NOT exclude `server/` or `dashboard/` themselves, since each
+# image's Dockerfile COPYs its own workspace member from this same context.
 
 # Never bake real secrets into an image layer.
 .env

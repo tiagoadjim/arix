@@ -10,7 +10,7 @@ upgrading in place. This is not a fresh-install guide — see the main
   to `'agent'` by migration `0002_sender_agent.sql`, which runs on the
   server's next boot. No action needed.
 - **Settings keys** — legacy flat setting keys (`medios_de_pago`, `envios`,
-  `info_general`, `uber_envio_template`, `compliance_rules`) are renamed in
+  `info_general`, `envio_template`, `compliance_rules`) are renamed in
   place to their new dot-namespaced equivalents (`info.payment`,
   `info.shipping`, `info.general`, `dispatch.template`, `compliance.rules`)
   by migration `0003_settings_namespaced.sql`. Values are preserved, not

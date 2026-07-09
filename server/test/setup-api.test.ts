@@ -3,14 +3,24 @@ import request from 'supertest';
 
 // Mock at the repo boundary (same style as confirm-payment.test.ts / settings-runtime.test.ts)
 // so no real Postgres connection is attempted.
-const { countStaff, createFirstAdmin, getStaffById, getSettings, upsertSetting } = vi.hoisted(() => ({
-  countStaff: vi.fn(),
-  createFirstAdmin: vi.fn(),
-  getStaffById: vi.fn(),
-  getSettings: vi.fn(),
-  upsertSetting: vi.fn(),
+const { countStaff, createFirstAdmin, getStaffById, getSettings, upsertSetting, createStaffStrict } = vi.hoisted(
+  () => ({
+    countStaff: vi.fn(),
+    createFirstAdmin: vi.fn(),
+    getStaffById: vi.fn(),
+    getSettings: vi.fn(),
+    upsertSetting: vi.fn(),
+    createStaffStrict: vi.fn(),
+  }),
+);
+vi.mock('../src/db/repo', () => ({
+  countStaff,
+  createFirstAdmin,
+  getStaffById,
+  getSettings,
+  upsertSetting,
+  createStaffStrict,
 }));
-vi.mock('../src/db/repo', () => ({ countStaff, createFirstAdmin, getStaffById, getSettings, upsertSetting }));
 
 // Mock the `openai` SDK constructor + create() call (same pattern as llm-client.test.ts)
 // so POST /api/setup/test/llm never hits a real network endpoint.
@@ -76,6 +86,7 @@ beforeEach(() => {
   getStaffById.mockReset().mockResolvedValue(STAFF);
   getSettings.mockReset().mockResolvedValue({});
   upsertSetting.mockReset().mockResolvedValue(undefined);
+  createStaffStrict.mockReset();
   create.mockReset();
   OpenAIMock.mockClear();
   invalidate();
@@ -356,7 +367,7 @@ describe('POST /api/whatsapp/restart', () => {
     expect(gateway.restart).not.toHaveBeenCalled();
   });
 
-  it('restarts anyway when already connected and force=true is passed', async () => {
+  it('restarts anyway when already connected and force=true is passed — with clearSession (real re-pair)', async () => {
     const gateway = fakeGateway({ connected: true });
     const app = createApiServer({ gateway });
     const res = await request(app)
@@ -365,15 +376,17 @@ describe('POST /api/whatsapp/restart', () => {
       .send({ force: true });
     expect(res.status).toBe(200);
     expect(gateway.restart).toHaveBeenCalledTimes(1);
+    expect(gateway.restart).toHaveBeenCalledWith({ clearSession: true });
   });
 
-  it('restarts the gateway when not connected', async () => {
+  it('restarts the gateway when not connected — without clearSession (just refreshes the pending QR)', async () => {
     const gateway = fakeGateway({ connected: false });
     const app = createApiServer({ gateway });
     const res = await request(app).post('/api/whatsapp/restart').set('Cookie', await authCookie());
     expect(res.status).toBe(200);
     expect(res.body.ok).toBe(true);
     expect(gateway.restart).toHaveBeenCalledTimes(1);
+    expect(gateway.restart).toHaveBeenCalledWith({});
   });
 });
 
@@ -469,6 +482,34 @@ describe('PUT /api/settings', () => {
     });
   });
 
+  it('skips a secret key posted with an empty value — keeps the stored value untouched and still returns ok', async () => {
+    await withEnv({ LLM_API_KEY: undefined }, async () => {
+      invalidate();
+      const app = createApiServer({ gateway: fakeGateway() });
+      const res = await request(app)
+        .put('/api/settings')
+        .set('Cookie', await authCookie())
+        .send({ key: 'llm.api_key', value: '' });
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ ok: true });
+      expect(upsertSetting).not.toHaveBeenCalled();
+    });
+  });
+
+  it('still overwrites a secret key when a non-empty value is posted', async () => {
+    await withEnv({ LLM_API_KEY: undefined }, async () => {
+      invalidate();
+      const app = createApiServer({ gateway: fakeGateway() });
+      const res = await request(app)
+        .put('/api/settings')
+        .set('Cookie', await authCookie())
+        .send({ key: 'llm.api_key', value: 'sk-new-key' });
+      expect(res.status).toBe(200);
+      const call = upsertSetting.mock.calls.find((c) => c[0] === 'llm.api_key');
+      expect(call).toBeTruthy();
+    });
+  });
+
   it('rejects an unknown key with 400 and writes nothing', async () => {
     const app = createApiServer({ gateway: fakeGateway() });
     const res = await request(app)
@@ -517,6 +558,38 @@ describe('PUT /api/settings', () => {
     const res = await request(app).get('/api/settings').set('Cookie', await authCookie());
     const nameDto = res.body.business.find((d: { key: string }) => d.key === 'business.name');
     expect(nameDto.value).toBe('Acme After Write');
+  });
+});
+
+describe('POST /api/staff', () => {
+  it('requires authentication', async () => {
+    const app = createApiServer({ gateway: fakeGateway() });
+    const res = await request(app)
+      .post('/api/staff')
+      .send({ email: 'new@example.com', password: 'longenough' });
+    expect(res.status).toBe(401);
+  });
+
+  it('creates a staff member and returns 201 with the staff DTO', async () => {
+    createStaffStrict.mockResolvedValue({ id: 'staff-2', email: 'new@example.com', name: 'New', password_hash: 'x' });
+    const app = createApiServer({ gateway: fakeGateway() });
+    const res = await request(app)
+      .post('/api/staff')
+      .set('Cookie', await authCookie())
+      .send({ name: 'New', email: 'new@example.com', password: 'longenough' });
+    expect(res.status).toBe(201);
+    expect(res.body).toEqual({ id: 'staff-2', email: 'new@example.com', name: 'New' });
+  });
+
+  it('returns 409 with {error: "staff_exists"} on a duplicate email, and leaves the original row untouched', async () => {
+    createStaffStrict.mockResolvedValue(null); // ON CONFLICT DO NOTHING → no row
+    const app = createApiServer({ gateway: fakeGateway() });
+    const res = await request(app)
+      .post('/api/staff')
+      .set('Cookie', await authCookie())
+      .send({ name: 'Dup', email: 'admin@example.com', password: 'longenough' });
+    expect(res.status).toBe(409);
+    expect(res.body).toEqual({ error: 'staff_exists' });
   });
 });
 

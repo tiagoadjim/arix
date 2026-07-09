@@ -27,7 +27,7 @@ describe('tool registry', () => {
 describe('runTool dispatch', () => {
   it('returns an error for an unknown tool', async () => {
     const out = JSON.parse(await runTool('no_existe', '{}', ctx));
-    expect(out.error).toMatch(/desconocida/);
+    expect(out.error).toMatch(/unknown tool/);
   });
 
   it('returns an error for invalid JSON arguments', async () => {

@@ -13,7 +13,7 @@ import {
   UserIcon,
   VideoIcon,
 } from 'lucide-react';
-import { api } from '@/lib/api';
+import { api, apiErrorMessage } from '@/lib/api';
 import type { Conversation as Conv, Message, Receipt, StaffOrder } from '@/lib/types';
 import type { Dictionary } from '@/lib/i18n';
 import { useT } from '@/lib/i18n/provider';
@@ -120,7 +120,7 @@ export function Conversation({ conversationId }: { conversationId: string }) {
       const updated = await api.setMode(conv.id, mode);
       setConv(updated);
     } catch (err) {
-      toast.error(t.common.error, { description: err instanceof Error ? err.message : undefined });
+      toast.error(t.common.error, { description: apiErrorMessage(err, t, t.common.error) });
     }
   }
 
@@ -135,7 +135,7 @@ export function Conversation({ conversationId }: { conversationId: string }) {
       setMessages((prev) => [...prev, msg]);
     } catch (err) {
       setText(body);
-      toast.error(t.conversation.sendFailed, { description: err instanceof Error ? err.message : undefined });
+      toast.error(t.conversation.sendFailed, { description: apiErrorMessage(err, t, t.conversation.sendFailed) });
     } finally {
       setSending(false);
     }

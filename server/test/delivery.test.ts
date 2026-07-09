@@ -12,23 +12,35 @@ describe('buildDeliveryMessage', () => {
     const tpl = 'Pedido #{numero}: {link} — código {codigo}. Repetido: {numero}/{codigo}';
     const out = buildDeliveryMessage(tpl, {
       numero: '1500',
-      link: 'https://uber.test/track/abc',
+      link: 'https://tracking.test/track/abc',
       codigo: '7788',
     });
     expect(out).toBe(
-      'Pedido #1500: https://uber.test/track/abc — código 7788. Repetido: 1500/7788',
+      'Pedido #1500: https://tracking.test/track/abc — código 7788. Repetido: 1500/7788',
     );
     expect(out).not.toMatch(/\{(numero|link|codigo)\}/);
   });
 
-  it('fills the default template with real values', () => {
-    const out = buildDeliveryMessage(DEFAULT_DELIVERY_TEMPLATE, {
+  it('fills the default Spanish template with real values', () => {
+    const out = buildDeliveryMessage(DEFAULT_DELIVERY_TEMPLATE.es, {
       numero: '42',
-      link: 'https://uber.test/x',
+      link: 'https://tracking.test/x',
       codigo: '0001',
     });
     expect(out).toContain('#42');
-    expect(out).toContain('https://uber.test/x');
+    expect(out).toContain('https://tracking.test/x');
+    expect(out).toContain('0001');
+    expect(out).not.toContain('{');
+  });
+
+  it('fills the default English template with real values', () => {
+    const out = buildDeliveryMessage(DEFAULT_DELIVERY_TEMPLATE.en, {
+      numero: '42',
+      link: 'https://tracking.test/x',
+      codigo: '0001',
+    });
+    expect(out).toContain('#42');
+    expect(out).toContain('https://tracking.test/x');
     expect(out).toContain('0001');
     expect(out).not.toContain('{');
   });

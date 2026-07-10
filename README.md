@@ -1,12 +1,5 @@
 <p align="center">
-  <img src="dashboard/public/logo.svg" alt="Arix" width="96" />
-</p>
-
-<h1 align="center">Arix</h1>
-
-<p align="center">
-  Open-source AI sales agent for WooCommerce, on WhatsApp.<br/>
-  Self-hosted, multi-LLM, ready in minutes.
+  <img src="docs/assets/arix-readme-hero.webp" alt="Arix — Open-source AI sales agent for WooCommerce, on WhatsApp" width="100%" />
 </p>
 
 <p align="center">
@@ -37,7 +30,9 @@ Postgres, receipt files, and session data never leave your server.
 - **Knows your business hours** — replies are aware of your configured
   schedule and timezone.
 
-<!-- Screenshots: dashboard inbox, conversation view, and setup wizard go here. -->
+<p align="center">
+  <img src="docs/assets/arix-product-flow.webp" alt="Arix product flow: WhatsApp, live catalog, payment verification, and human handoff" width="100%" />
+</p>
 
 ## Architecture
 
@@ -188,6 +183,10 @@ backups, and zero-downtime updates.
   `schema_migrations` table. Safe to run on every boot.
 
 ## Security & privacy
+
+<p align="center">
+  <img src="docs/assets/arix-self-hosted.webp" alt="Arix self-hosted infrastructure and data ownership" width="100%" />
+</p>
 
 - Everything self-hosts on your own infrastructure: Postgres, receipt files,
   and WhatsApp session data live in your Docker volumes, not a third party.

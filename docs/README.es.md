@@ -1,12 +1,5 @@
 <p align="center">
-  <img src="../dashboard/public/logo.svg" alt="Arix" width="96" />
-</p>
-
-<h1 align="center">Arix</h1>
-
-<p align="center">
-  Agente de IA de código abierto para WooCommerce, sobre WhatsApp.<br/>
-  Autoalojado, multi-LLM, listo en minutos.
+  <img src="assets/arix-readme-hero.webp" alt="Arix — agente de ventas con IA de código abierto para WooCommerce y WhatsApp" width="100%" />
 </p>
 
 <p align="center">
@@ -41,7 +34,9 @@ salen de tu servidor.
 - **Conoce el horario del negocio** — las respuestas tienen en cuenta el
   horario y el huso horario configurados.
 
-<!-- Capturas de pantalla: inbox del dashboard, vista de conversación y wizard de configuración van acá. -->
+<p align="center">
+  <img src="assets/arix-product-flow.webp" alt="Flujo de Arix: WhatsApp, catálogo en vivo, verificación de pagos y derivación humana" width="100%" />
+</p>
 
 ## Arquitectura
 
@@ -204,6 +199,10 @@ concisa: Caddy como proxy reverso con HTTPS automático, cómo poner
   de correr en cada arranque.
 
 ## Seguridad y privacidad
+
+<p align="center">
+  <img src="assets/arix-self-hosted.webp" alt="Arix autoalojado: tu infraestructura y tus datos" width="100%" />
+</p>
 
 - Todo se autoaloja en tu propia infraestructura: Postgres, los archivos de
   comprobantes y los datos de sesión de WhatsApp viven en tus volúmenes de

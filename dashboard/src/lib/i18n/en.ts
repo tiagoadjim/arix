@@ -144,10 +144,12 @@ export const en: Dictionary = {
   },
   settings: {
     pageTitle: 'Settings',
-    pageDescription: 'Configure the AI provider, store, business profile, WhatsApp and staff.',
+    pageDescription: 'Configure the AI provider, store, skills, MCP, business profile, WhatsApp and staff.',
     tabProvider: 'AI Provider',
     tabStore: 'Store',
     tabBusiness: 'Business',
+    tabSkills: 'Skills',
+    tabMcp: 'MCP',
     tabWhatsapp: 'WhatsApp',
     tabStaff: 'Staff',
     saveButton: 'Save changes',
@@ -225,6 +227,51 @@ export const en: Dictionary = {
       dispatchTemplateLabel: 'Dispatch message',
       dispatchTemplateHint: 'WhatsApp template sent when an order ships. Placeholders: {numero} {link} {codigo}.',
     },
+    skills: {
+      description: 'Choose which built-in skills the agent can use when helping customers.',
+      items: {
+        catalog: {
+          label: 'Catalog',
+          description: 'Search products and view stock, prices, and variants from WooCommerce.',
+        },
+        orders: {
+          label: 'Orders',
+          description: 'Look up a customer order by number or phone.',
+        },
+        payments: {
+          label: 'Payments',
+          description: 'Confirm a transfer receipt against an order total.',
+        },
+        handoff: {
+          label: 'Human handoff',
+          description: 'Pause the bot and escalate the conversation to a human teammate.',
+        },
+      },
+    },
+    mcp: {
+      description:
+        'Connect MCP (Model Context Protocol) servers to add external tools to the agent. Tools appear as mcp_<id>__<tool>.',
+      empty: 'No MCP servers configured yet.',
+      addServer: 'Add server',
+      removeServer: 'Remove server',
+      newServerTitle: 'New server',
+      idLabel: 'Id',
+      idHint: 'Lowercase letters, numbers, _ and - only. Used as the tool name prefix.',
+      nameLabel: 'Name',
+      transportLabel: 'Transport',
+      transportStdio: 'stdio (local process)',
+      transportHttp: 'HTTP (Streamable)',
+      commandLabel: 'Command',
+      argsLabel: 'Arguments',
+      envLabel: 'Environment variables',
+      envHint: 'One per line: KEY=value. Leave the value blank to keep the current one.',
+      cwdLabel: 'Working directory (optional)',
+      urlLabel: 'Endpoint URL',
+      headersLabel: 'Headers',
+      headersHint: 'One per line: Name: value. Leave the value blank to keep the current one.',
+      testSuccessToast: 'Connected successfully — {n} tools available.',
+      testErrorTitle: 'Could not connect to the MCP server',
+    },
     whatsapp: {
       connectedTitle: 'WhatsApp connected',
       connectedDescription: 'The agent can send and receive messages normally.',
@@ -300,6 +347,16 @@ export const en: Dictionary = {
     store: {
       title: 'Connect your WooCommerce store',
       subtitle: 'So the agent can look up products, stock and orders.',
+      skipLink: 'Configure later',
+    },
+    skills: {
+      title: 'Agent skills',
+      subtitle: 'Enable the abilities the agent can use while selling.',
+      skipLink: 'Use all (recommended)',
+    },
+    mcp: {
+      title: 'MCP servers',
+      subtitle: 'Optional: add external tools via Model Context Protocol.',
       skipLink: 'Configure later',
     },
     business: {

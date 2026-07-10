@@ -5,6 +5,13 @@ import {
   type SettingType,
 } from '../config/settings-schema';
 import type { ResolvedEntry, ResolvedMeta, SettingSource } from '../config/runtime';
+import {
+  mergeMcpServers,
+  normalizeMcpServers,
+  toMcpServerDto,
+  type McpServerConfig,
+} from '../mcp/types';
+import { normalizeEnabledSkills } from '../skills/ids';
 
 /**
  * Sanitized, dashboard-facing view of one settings-schema entry. This is the
@@ -13,6 +20,11 @@ import type { ResolvedEntry, ResolvedMeta, SettingSource } from '../config/runti
  * browser: for `secret: true` keys, `value` is ALWAYS null — `set` is the
  * only signal the dashboard gets for whether one is configured. See
  * settings-dto.test.ts for the no-plaintext-leak proof.
+ *
+ * `mcp.servers` is a special case: the setting itself isn't marked `secret`
+ * (operators need to edit command/url/args), but per-server `env` and
+ * `headers` values ARE secrets — {@link sanitizeSettingValue} strips them
+ * before they reach the browser.
  */
 export interface SettingDto {
   key: string;
@@ -32,6 +44,17 @@ export interface SettingDto {
   secret: boolean;
 }
 
+/** Strip secret material from values that leave the server. */
+function sanitizeSettingValue(key: string, value: unknown): unknown {
+  if (key === 'mcp.servers') {
+    return normalizeMcpServers(value).map(toMcpServerDto);
+  }
+  if (key === 'skills.enabled') {
+    return normalizeEnabledSkills(value);
+  }
+  return value;
+}
+
 export function toSettingDto(entry: SettingDefinition, resolved: ResolvedEntry): SettingDto {
   const secret = entry.secret === true;
   return {
@@ -39,7 +62,7 @@ export function toSettingDto(entry: SettingDefinition, resolved: ResolvedEntry):
     group: entry.group,
     type: entry.type,
     label: entry.label,
-    value: secret ? null : resolved.value,
+    value: secret ? null : sanitizeSettingValue(entry.key, resolved.value),
     set: secret ? Boolean(String(resolved.value ?? '').trim()) : resolved.source !== 'default',
     source: resolved.source,
     readOnly: resolved.source === 'env',
@@ -115,8 +138,26 @@ export function isNoOpSecretUpdate(entry: SettingDefinition, raw: unknown): bool
  * a PUT request body) into the TEXT representation stored in the `settings`
  * table. Mirrors parseRawValue's own fallback rules (bad enum/number falls
  * back to the schema default) so a bad write can never store an unparseable
- * value that would otherwise silently misbehave on the next read. */
-export function coerceForStorage(entry: SettingDefinition, value: unknown): string {
+ * value that would otherwise silently misbehave on the next read.
+ *
+ * For `mcp.servers`, merges with the previously stored list so blank
+ * env/header values mean "keep current" (dashboard never re-sends secrets).
+ * Pass `previousRaw` (the currently resolved value) when available.
+ */
+export function coerceForStorage(
+  entry: SettingDefinition,
+  value: unknown,
+  previousRaw?: unknown,
+): string {
+  if (entry.key === 'mcp.servers') {
+    const incoming = normalizeMcpServers(value);
+    const previous = normalizeMcpServers(previousRaw);
+    const merged: McpServerConfig[] = mergeMcpServers(incoming, previous);
+    return JSON.stringify(merged);
+  }
+  if (entry.key === 'skills.enabled') {
+    return JSON.stringify(normalizeEnabledSkills(value));
+  }
   switch (entry.type) {
     case 'boolean':
       return typeof value === 'boolean' ? String(value) : /^(1|true|yes|on)$/i.test(String(value ?? '')) ? 'true' : 'false';

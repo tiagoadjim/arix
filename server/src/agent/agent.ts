@@ -1,7 +1,7 @@
 import type OpenAI from 'openai';
 import { getLlm, LlmRequestError, type LlmHandle } from './llm/client';
 import { buildSystemPrompt } from './prompt';
-import { toolDefinitions, runTool } from './tools';
+import { getToolDefinitions, runTool } from './tools';
 import { getGuardrails, type Guardrails } from './guardrails';
 import {
   businessProfile,
@@ -150,6 +150,10 @@ export async function runAgent(ctx: ToolContext, history: Message[]): Promise<st
   const lastCustomerText =
     [...history].reverse().find((m) => m.direction === 'in')?.body?.trim() ?? '';
 
+  // Resolve tools once per turn (built-in skills + live MCP). Cheap after the
+  // first call — MCP pool and settings are memoized until invalidate().
+  const toolDefinitions = await getToolDefinitions();
+
   for (let step = 0; step < MAX_STEPS; step += 1) {
     // Intersect with an index signature so providers can attach extra,
     // provider-specific request fields that the OpenAI types don't know
@@ -159,7 +163,7 @@ export async function runAgent(ctx: ToolContext, history: Message[]): Promise<st
       Record<string, unknown> = {
       model: handle.model,
       messages,
-      tools: toolDefinitions,
+      tools: toolDefinitions.length > 0 ? toolDefinitions : undefined,
       temperature: 0.4,
       // Generous budget: thinking models need headroom so the answer isn't
       // truncated (handled below).

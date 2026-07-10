@@ -139,6 +139,8 @@ export interface Dictionary {
     tabProvider: string;
     tabStore: string;
     tabBusiness: string;
+    tabSkills: string;
+    tabMcp: string;
     tabWhatsapp: string;
     tabStaff: string;
     saveButton: string;
@@ -216,6 +218,38 @@ export interface Dictionary {
       dispatchTemplateLabel: string;
       dispatchTemplateHint: string;
     };
+    skills: {
+      description: string;
+      items: {
+        catalog: { label: string; description: string };
+        orders: { label: string; description: string };
+        payments: { label: string; description: string };
+        handoff: { label: string; description: string };
+      };
+    };
+    mcp: {
+      description: string;
+      empty: string;
+      addServer: string;
+      removeServer: string;
+      newServerTitle: string;
+      idLabel: string;
+      idHint: string;
+      nameLabel: string;
+      transportLabel: string;
+      transportStdio: string;
+      transportHttp: string;
+      commandLabel: string;
+      argsLabel: string;
+      envLabel: string;
+      envHint: string;
+      cwdLabel: string;
+      urlLabel: string;
+      headersLabel: string;
+      headersHint: string;
+      testSuccessToast: string;
+      testErrorTitle: string;
+    };
     whatsapp: {
       connectedTitle: string;
       connectedDescription: string;
@@ -281,6 +315,8 @@ export interface Dictionary {
     };
     provider: { title: string; subtitle: string; skipLink: string };
     store: { title: string; subtitle: string; skipLink: string };
+    skills: { title: string; subtitle: string; skipLink: string };
+    mcp: { title: string; subtitle: string; skipLink: string };
     business: { title: string; subtitle: string };
     whatsapp: { title: string; subtitle: string; skipLink: string };
     done: { title: string; subtitle: string; goToDashboard: string };

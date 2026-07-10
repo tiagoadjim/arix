@@ -12,9 +12,12 @@ import {
   dispatchTemplate,
   invalidate as invalidateSettings,
   getResolvedWithMeta,
+  getResolved,
   envLockedKeys,
   setupCompleted,
   businessProfile,
+  enabledSkills,
+  mcpServers,
 } from '../config/runtime';
 import { encryptSecret } from '../config/secret';
 import { PROVIDERS, type ProviderSpec } from '../agent/llm/providers';
@@ -25,6 +28,14 @@ import {
   coerceForStorage,
   isNoOpSecretUpdate,
 } from './settings-dto';
+import { buildSkillCatalog } from '../skills/registry';
+import {
+  invalidateMcpPool,
+  listConnectedServerIds,
+  listMcpTools,
+  testMcpServer,
+} from '../mcp/manager';
+import { normalizeMcpServers, toMcpServerDto } from '../mcp/types';
 import {
   orderForStaff,
   STATUS_ES,
@@ -491,6 +502,10 @@ export function createApiServer(deps: { gateway: WhatsAppGateway }) {
         });
         return;
       }
+      // Snapshot current values before writing so mcp.servers can merge
+      // blank env/header fields as "keep current" (see coerceForStorage).
+      const previous = await getResolved();
+      let touchedMcp = false;
       try {
         await Promise.all(
           validated.updates
@@ -499,7 +514,8 @@ export function createApiServer(deps: { gateway: WhatsAppGateway }) {
             // blank, and never treat it as an error (see isNoOpSecretUpdate).
             .filter(({ entry, raw }) => !isNoOpSecretUpdate(entry, raw))
             .map(({ entry, raw }) => {
-              const stored = coerceForStorage(entry, raw);
+              if (entry.key === 'mcp.servers') touchedMcp = true;
+              const stored = coerceForStorage(entry, raw, previous[entry.key]);
               return repo.upsertSetting(entry.key, entry.secret ? encryptSecret(stored) : stored);
             }),
         );
@@ -508,8 +524,55 @@ export function createApiServer(deps: { gateway: WhatsAppGateway }) {
         // cancel the writes that already started, so the cache must never
         // stay stale relative to whatever did land.
         invalidateSettings();
+        if (touchedMcp) invalidateMcpPool();
       }
       res.json({ ok: true });
+    }),
+  );
+
+  // ---- skills catalog (built-in, with enable flags) ----
+  app.get(
+    '/api/skills',
+    requireAuth,
+    ah(async (_req, res) => {
+      const enabled = await enabledSkills();
+      res.json({ skills: buildSkillCatalog(enabled) });
+    }),
+  );
+
+  // ---- MCP servers: status + live tools + connection test ----
+  app.get(
+    '/api/mcp',
+    requireAuth,
+    ah(async (_req, res) => {
+      const [servers, connectedIds, tools] = await Promise.all([
+        mcpServers(),
+        listConnectedServerIds(),
+        listMcpTools(),
+      ]);
+      const connected = new Set(connectedIds);
+      res.json({
+        servers: servers.map((s) => ({
+          ...toMcpServerDto(s),
+          connected: connected.has(s.id),
+        })),
+        tools,
+      });
+    }),
+  );
+
+  app.post(
+    '/api/mcp/test',
+    requireAuth,
+    ah(async (req, res) => {
+      const configs = normalizeMcpServers([req.body]);
+      const cfg = configs[0];
+      if (!cfg) {
+        res.status(400).json({ ok: false, error: 'Invalid MCP server configuration.' });
+        return;
+      }
+      const result = await testMcpServer(cfg);
+      res.json(result);
     }),
   );
 

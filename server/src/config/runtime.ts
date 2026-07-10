@@ -3,6 +3,8 @@ import { getSettings, upsertSetting } from '../db/repo';
 import { decryptSecret, encryptSecret } from './secret';
 import { SETTINGS_SCHEMA, type SettingDefinition } from './settings-schema';
 import type { Schedule } from '../agent/hours';
+import { normalizeEnabledSkills, DEFAULT_ENABLED_SKILLS } from '../skills/ids';
+import { normalizeMcpServers, type McpServerConfig } from '../mcp/types';
 
 /**
  * Runtime config service — the backbone the rest of the app reads operable
@@ -86,6 +88,11 @@ function parseRawValue(entry: SettingDefinition, raw: string): unknown {
       try {
         return JSON.parse(raw);
       } catch (err) {
+        // Convenience for SKILLS_ENABLED=catalog,orders (CSV) — accept a
+        // comma-separated list when the value isn't valid JSON.
+        if (entry.key === 'skills.enabled') {
+          return raw.split(',').map((s) => s.trim()).filter(Boolean);
+        }
         logger.warn({ err, key: entry.key }, 'settings: malformed JSON in DB row — using default');
         return entry.default;
       }
@@ -281,6 +288,26 @@ export async function complianceRules(): Promise<string> {
 export async function setupCompleted(): Promise<boolean> {
   const meta = await resolve();
   return valueOf<boolean>(meta, 'setup.completed');
+}
+
+/** Ids of built-in skills currently enabled for the agent. */
+export async function enabledSkills(): Promise<string[]> {
+  const meta = await resolve();
+  const raw = valueOf<unknown>(meta, 'skills.enabled');
+  // Env seed arrives as a comma-separated string when set via SKILLS_ENABLED
+  // (parseRawValue for json tries JSON.parse first; a bare CSV falls through
+  // to the default). Accept both a JSON array and a CSV string here.
+  if (typeof raw === 'string') {
+    const parts = raw.split(',').map((s) => s.trim()).filter(Boolean);
+    return normalizeEnabledSkills(parts.length > 0 ? parts : DEFAULT_ENABLED_SKILLS);
+  }
+  return normalizeEnabledSkills(raw);
+}
+
+/** Configured MCP servers (enabled and disabled). */
+export async function mcpServers(): Promise<McpServerConfig[]> {
+  const meta = await resolve();
+  return normalizeMcpServers(valueOf<unknown>(meta, 'mcp.servers'));
 }
 
 // ---- First-boot env seeding + introspection ------------------------------------

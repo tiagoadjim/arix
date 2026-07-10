@@ -155,6 +155,41 @@ export interface SettingsUpdate {
   value: unknown;
 }
 
+export interface SkillCatalogEntry {
+  id: string;
+  label: string;
+  description: string;
+  toolNames: string[];
+  enabled: boolean;
+}
+
+export interface McpServerDto {
+  id: string;
+  name: string;
+  enabled: boolean;
+  transport: 'stdio' | 'http';
+  command?: string;
+  args?: string[];
+  envKeys: string[];
+  cwd?: string;
+  url?: string;
+  headerKeys: string[];
+  connected?: boolean;
+}
+
+export interface McpToolInfo {
+  serverId: string;
+  name: string;
+  namespacedName: string;
+  description?: string;
+}
+
+export interface TestMcpResult {
+  ok: boolean;
+  error?: string;
+  tools?: McpToolInfo[];
+}
+
 export const api = {
   logout: () => jpost('/api/auth/logout'),
   conversations: () => jget<Conversation[]>('/api/conversations'),
@@ -184,6 +219,11 @@ export const api = {
   // actually returns since Fase 6) ----
   settingsGrouped: () => jget<Record<string, SettingDto[]>>('/api/settings'),
   saveSettings: (updates: SettingsUpdate[]) => jput<{ ok: boolean }>('/api/settings', { updates }),
+
+  // ---- skills + MCP ----
+  skills: () => jget<{ skills: SkillCatalogEntry[] }>('/api/skills'),
+  mcpStatus: () => jget<{ servers: McpServerDto[]; tools: McpToolInfo[] }>('/api/mcp'),
+  testMcp: (body: unknown) => jpostLenient<TestMcpResult>('/api/mcp/test', body),
 
   // ---- agentes (staff) ----
   staff: () => jget<Agent[]>('/api/staff'),

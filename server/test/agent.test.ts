@@ -48,7 +48,11 @@ vi.mock('../src/agent/llm/client', () => {
   };
 });
 
-vi.mock('../src/agent/tools', () => ({ toolDefinitions: [], toolNames: [], runTool }));
+vi.mock('../src/agent/tools', () => ({
+  getToolDefinitions: async () => [],
+  getBuiltinToolNames: async () => [],
+  runTool,
+}));
 
 import { runAgent } from '../src/agent/agent';
 import { LlmRequestError } from '../src/agent/llm/client';

@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from 'next/server';
-import { SESSION_COOKIE, isValidSession } from '@/lib/auth';
+import { SESSION_COOKIE, getValidSession } from '@/lib/auth';
 
 interface SetupStatus {
   needsSetup: boolean;
@@ -14,7 +14,10 @@ interface SetupStatus {
 async function fetchSetupStatus(): Promise<SetupStatus | null> {
   const base = process.env.SERVER_API_URL || 'http://localhost:3001';
   try {
-    const res = await fetch(`${base}/api/setup/status`, { cache: 'no-store' });
+    const res = await fetch(`${base}/api/setup/status`, {
+      cache: 'no-store',
+      signal: AbortSignal.timeout(4_000),
+    });
     if (!res.ok) return null;
     return (await res.json()) as SetupStatus;
   } catch {
@@ -24,10 +27,16 @@ async function fetchSetupStatus(): Promise<SetupStatus | null> {
 
 export async function middleware(request: NextRequest) {
   const token = request.cookies.get(SESSION_COOKIE)?.value;
-  const authed = await isValidSession(token);
+  const session = await getValidSession(token);
+  const authed = session !== null;
   const { pathname } = request.nextUrl;
   const isLogin = pathname.startsWith('/login');
   const isSetup = pathname.startsWith('/setup');
+  const isExpiredLogin = isLogin && request.nextUrl.searchParams.get('expired') === '1';
+
+  if (authed && session.role !== 'admin' && (isSetup || pathname.startsWith('/config') || pathname.startsWith('/analytics'))) {
+    return NextResponse.redirect(new URL('/', request.url));
+  }
 
   if (isSetup) {
     // The wizard needs `needsSetup`/`setupCompleted` regardless of auth state,
@@ -52,7 +61,7 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  if (authed && isLogin) {
+  if (authed && isLogin && !isExpiredLogin) {
     return NextResponse.redirect(new URL('/', request.url));
   }
 

@@ -39,6 +39,7 @@ export interface Dictionary {
     advanced: string;
     envLockedBadge: string;
     noChanges: string;
+    skipToContent: string;
   };
   login: {
     title: string;
@@ -48,6 +49,7 @@ export interface Dictionary {
     submit: string;
     submitting: string;
     errorGeneric: string;
+    sessionExpired: string;
   };
   sidebar: {
     filterAll: string;
@@ -56,16 +58,22 @@ export interface Dictionary {
     /** e.g. "3 unread" / "3 sin leer" — used as a compact suffix, not a full sentence. */
     unread: string;
     emptyList: string;
+    loadMore: string;
+    loadingMore: string;
     fetchError: string;
     muteOnTooltip: string;
     muteOffTooltip: string;
     muteOnAria: string;
     muteOffAria: string;
     settingsNav: string;
+    analyticsNav: string;
+    adminNavLabel: string;
     signOut: string;
     modeHuman: string;
     themeToLight: string;
     themeToDark: string;
+    inboxLabel: string;
+    backToInbox: string;
   };
   panelHome: {
     hint: string;
@@ -85,6 +93,14 @@ export interface Dictionary {
     refreshAria: string;
     botHint: string;
     messagesLabel: string;
+    loadOlder: string;
+    loadingOlder: string;
+    historyError: string;
+    refreshError: string;
+    showDetails: string;
+    closeDetails: string;
+    detailsTitle: string;
+    newMessages: string;
     composerPlaceholder: string;
     send: string;
     sending: string;
@@ -130,8 +146,26 @@ export interface Dictionary {
     receiptAmountLabel: string;
     receiptTotalLabel: string;
     receiptResultLabel: string;
+    receiptReviewLabel: string;
+    receiptReferenceLabel: string;
     receiptImageAlt: string;
     matchStatus: { match: string; mismatch: string; unreadable: string; pending: string };
+    reviewStatus: { pending: string; processing: string; approved: string; rejected: string };
+    approveReceipt: string;
+    rejectReceipt: string;
+    reviewDialogApproveTitle: string;
+    reviewDialogRejectTitle: string;
+    reviewDialogApproveDescription: string;
+    reviewDialogRejectDescription: string;
+    reviewNoteLabel: string;
+    reviewNotePlaceholder: string;
+    reviewSubmitApprove: string;
+    reviewSubmitReject: string;
+    reviewSubmitting: string;
+    reviewSuccessApproved: string;
+    reviewSuccessRejected: string;
+    reviewFailed: string;
+    receiptNotApprovable: string;
   };
   settings: {
     pageTitle: string;
@@ -167,6 +201,10 @@ export interface Dictionary {
       reasoningSplitHint: string;
       thinkingDisabledLabel: string;
       thinkingDisabledHint: string;
+      costTitle: string;
+      costHint: string;
+      inputCostLabel: string;
+      outputCostLabel: string;
       testSuccessToast: string;
       visionYes: string;
       visionNo: string;
@@ -187,6 +225,9 @@ export interface Dictionary {
       productLinkTemplateHint: string;
       toleranceLabel: string;
       toleranceHint: string;
+      autoConfirmLabel: string;
+      autoConfirmDisabledHint: string;
+      autoConfirmEnabledHint: string;
       testSuccessToast: string;
       testSuccessWithProductToast: string;
       testErrorTitle: string;
@@ -273,6 +314,9 @@ export interface Dictionary {
       nameLabel: string;
       emailLabel: string;
       passwordLabel: string;
+      roleLabel: string;
+      roleAdmin: string;
+      roleAgent: string;
       passwordHint: string;
       createButton: string;
       creating: string;
@@ -293,7 +337,37 @@ export interface Dictionary {
       passwordTooShort: string;
       resetSubmit: string;
       resetSuccessToast: string;
+      roleChangedToast: string;
     };
+  };
+  analytics: {
+    pageTitle: string;
+    pageDescription: string;
+    periodLabel: string;
+    days7: string;
+    days30: string;
+    days90: string;
+    totalRequests: string;
+    totalTokens: string;
+    estimatedCost: string;
+    inputTokens: string;
+    outputTokens: string;
+    usageTitle: string;
+    usageDescription: string;
+    noUsage: string;
+    day: string;
+    providerModel: string;
+    requests: string;
+    tokens: string;
+    cost: string;
+    auditTitle: string;
+    auditDescription: string;
+    noAudit: string;
+    actorSystem: string;
+    target: string;
+    runtimeTitle: string;
+    runtimeDescription: string;
+    refreshFailed: string;
   };
   wizard: {
     stepProgress: string;
@@ -301,6 +375,9 @@ export interface Dictionary {
     admin: {
       title: string;
       subtitle: string;
+      setupTokenLabel: string;
+      setupTokenHint: string;
+      setupTokenRequired: string;
       nameLabel: string;
       emailLabel: string;
       passwordLabel: string;

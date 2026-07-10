@@ -30,9 +30,11 @@ export const handoffTools: ToolSpec[] = [
       // business's configured agent language when it's trivially available,
       // defaulting to English otherwise.
       const profile = await businessProfile().catch(() => null);
+      if (ctx.signal?.aborted) throw ctx.signal.reason;
       const isEs = profile?.language === 'es';
       const reason = String(args.reason ?? '').trim() || (isEs ? 'sin motivo especificado' : 'no reason specified');
       await setConversationMode(ctx.conversationId, 'human', { escalationReason: reason });
+      if (ctx.signal?.aborted) throw ctx.signal.reason;
       await insertOutboundMessage({
         conversationId: ctx.conversationId,
         sender: 'system',

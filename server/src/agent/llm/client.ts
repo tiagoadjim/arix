@@ -2,6 +2,8 @@ import OpenAI from 'openai';
 import { llm as resolveLlm, settingsVersion } from '../../config/runtime';
 import { logger } from '../../logger';
 import { PROVIDERS, type ProviderId, type ProviderSpec } from './providers';
+import { safeFetch } from '../../net/safe-fetch';
+import { insertLlmUsage } from '../../db/repo';
 
 type ChatCompletion = OpenAI.Chat.Completions.ChatCompletion;
 type ChatCompletionCreateParamsNonStreaming =
@@ -34,9 +36,18 @@ export interface LlmHandle {
    * `tool_choice` (or any other body field) is entirely the caller's
    * responsibility — this just passes `params` through after retry handling.
    */
-  chatComplete(params: ChatCompletionCreateParamsNonStreaming & Record<string, unknown>): Promise<ChatCompletion>;
+  chatComplete(
+    params: ChatCompletionCreateParamsNonStreaming & Record<string, unknown>,
+    options?: LlmCallOptions,
+  ): Promise<ChatCompletion>;
   /** Cleans up raw assistant text (delegates to provider.postprocess). */
   postprocess(text: string): string;
+}
+
+export interface LlmCallOptions {
+  /** Cancels the active SDK request and any retry backoff immediately. */
+  signal?: AbortSignal;
+  conversationId?: string;
 }
 
 const MAX_ATTEMPTS = 3;
@@ -44,8 +55,31 @@ const MAX_ATTEMPTS = 3;
 // 2nd call, index 1 → before the 3rd call). No sleep after the final attempt.
 const BACKOFF_MS: readonly number[] = [500, 2000];
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function abortReason(signal: AbortSignal): Error {
+  if (signal.reason instanceof Error) return signal.reason;
+  const err = new Error('LLM request aborted');
+  err.name = 'AbortError';
+  return err;
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw abortReason(signal);
+}
+
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  if (!signal) return new Promise((resolve) => setTimeout(resolve, ms));
+  if (signal.aborted) return Promise.reject(abortReason(signal));
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(abortReason(signal));
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
 }
 
 /** Numeric HTTP status if `err` carries one (OpenAI SDK APIError shape),
@@ -75,12 +109,20 @@ function messageOf(err: unknown): string {
 async function callWithRetry(
   client: OpenAI,
   params: ChatCompletionCreateParamsNonStreaming & Record<string, unknown>,
+  options: LlmCallOptions = {},
 ): Promise<ChatCompletion> {
   let lastErr: unknown;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
+    throwIfAborted(options.signal);
     try {
-      return await client.chat.completions.create(params);
+      return await client.chat.completions.create(
+        params,
+        options.signal ? { signal: options.signal } : undefined,
+      );
     } catch (err) {
+      // A turn-level abort is intentional: propagate its original reason and
+      // never reinterpret it as a retryable network failure.
+      throwIfAborted(options.signal);
       lastErr = err;
       const status = statusOf(err);
       if (!isRetryableStatus(status)) {
@@ -92,7 +134,7 @@ async function callWithRetry(
           { attempt, status, delay },
           'llm request failed — retrying after backoff',
         );
-        await sleep(delay);
+        await sleep(delay, options.signal);
       }
     }
   }
@@ -145,24 +187,42 @@ export async function getLlm(): Promise<LlmHandle> {
     // there; this is a real conversational request, so a slightly larger
     // budget) so a hung provider can't wedge a WhatsApp reply indefinitely.
     timeout: 60_000,
+    fetch: (url, init) => safeFetch(url, init, { timeoutMs: 60_000 }),
   });
 
   const handle: LlmHandle = {
     provider,
     model,
-    async chatComplete(params) {
-      const resp = await callWithRetry(client, params);
+    async chatComplete(params, options) {
+      const resp = await callWithRetry(client, params, options);
       if (resp.usage) {
+        const promptTokens = resp.usage.prompt_tokens;
+        const completionTokens = resp.usage.completion_tokens;
+        const totalTokens = resp.usage.total_tokens;
+        const estimatedCostUsd =
+          (promptTokens * resolved.inputCostPerMillion +
+            completionTokens * resolved.outputCostPerMillion) /
+          1_000_000;
         logger.info(
           {
             provider: provider.id,
             model,
-            promptTokens: resp.usage.prompt_tokens,
-            completionTokens: resp.usage.completion_tokens,
-            totalTokens: resp.usage.total_tokens,
+            promptTokens,
+            completionTokens,
+            totalTokens,
+            estimatedCostUsd,
           },
           'llm usage',
         );
+        void insertLlmUsage({
+          conversationId: options?.conversationId,
+          provider: provider.id,
+          model,
+          promptTokens,
+          completionTokens,
+          totalTokens,
+          estimatedCostUsd,
+        }).catch((err) => logger.warn({ err }, 'failed to persist LLM usage'));
       }
       return resp;
     },

@@ -1,5 +1,6 @@
 # Arix — self-hosted AI sales agent for WooCommerce over WhatsApp.
-# Postgres + server + dashboard. First run: open http://localhost:3000 for the setup wizard.
+# Postgres + server + dashboard. First run: open http://localhost:3000 locally
+# for the setup wizard; do not publish it before the first admin is created.
 
 services:
   db:
@@ -44,7 +45,7 @@ services:
     # and the WhatsApp QR is scanned from the dashboard's setup wizard (no host port
     # needed for that). Health is checked inside the container below.
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://localhost:3001/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3001/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -63,16 +64,20 @@ services:
       context: .
       dockerfile: dashboard/Dockerfile
     image: arix-dashboard
-    env_file: .env
     environment:
-      # The dashboard proxies /api/* to the server over the Docker network.
+      # Explicit allowlist: never inject the server's DATABASE_URL,
+      # SETUP_TOKEN, encryption keys, LLM/WooCommerce credentials, etc. into
+      # this internet-facing container.
       SERVER_API_URL: http://server:3001
+      AUTH_JWT_SECRET: ${AUTH_JWT_SECRET}
     restart: unless-stopped
     depends_on:
       server:
         condition: service_healthy
     ports:
-      - "3000:3000"
+      # Loopback only. Put an authenticated/TLS reverse proxy in front only
+      # after completing the one-shot bootstrap locally (see deploy guide).
+      - "127.0.0.1:3000:3000"
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://localhost:3000/').then(r=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))"]
       interval: 30s

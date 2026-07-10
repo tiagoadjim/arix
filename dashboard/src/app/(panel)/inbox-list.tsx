@@ -3,11 +3,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { BellIcon, BellOffIcon, BotIcon, LogOutIcon, RefreshCwIcon, SettingsIcon, UserIcon } from 'lucide-react';
+import {
+  BarChart3Icon,
+  BellIcon,
+  BellOffIcon,
+  BotIcon,
+  LogOutIcon,
+  RefreshCwIcon,
+  SettingsIcon,
+  UserIcon,
+} from 'lucide-react';
 import { api } from '@/lib/api';
 import type { Conversation } from '@/lib/types';
 import { initAudioUnlock, isMuted, playHumanWaiting, playNewMessage, setMuted } from '@/lib/sounds';
 import { usePolling } from '@/hooks/usePolling';
+import { useServerEvents } from '@/hooks/useServerEvents';
 import { timeAgo } from '@/lib/format';
 import { useT } from '@/lib/i18n/provider';
 import { cn } from '@/lib/utils';
@@ -21,7 +31,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 
 type Filter = 'all' | 'human' | 'unread';
 
-export function InboxList() {
+export function InboxList({ canManageSettings }: { canManageSettings: boolean }) {
   const router = useRouter();
   const pathname = usePathname();
   const { t, locale } = useT();
@@ -31,7 +41,11 @@ export function InboxList() {
   const [filter, setFilter] = useState<Filter>('all');
   const [muted, setMutedState] = useState(false);
   const [fetchError, setFetchError] = useState(false);
-  const [isAdmin, setIsAdmin] = useState(false);
+  const [fetching, setFetching] = useState(false);
+  const [nextCursor, setNextCursor] = useState<string | null | undefined>(undefined);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const paginationStarted = useRef(false);
+  const loadMoreController = useRef<AbortController | null>(null);
 
   // Snapshots of the previous poll so we can detect *changes* and chime.
   const prevUnread = useRef<Map<string, number>>(new Map());
@@ -41,12 +55,15 @@ export function InboxList() {
   useEffect(() => {
     setMutedState(isMuted());
     initAudioUnlock(); // unlock audio on first user interaction (autoplay policy)
-    void api.me().then((user) => setIsAdmin(user.role === 'admin')).catch(() => {});
+    return () => loadMoreController.current?.abort();
   }, []);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (signal: AbortSignal) => {
+    setFetching(true);
     try {
-      const data = await api.conversations();
+      const page = await api.conversations(signal);
+      if (signal.aborted) return;
+      const data = page.conversations;
 
       // Detect new customer messages (unread grew — never fires on the agent's own
       // replies, which reset unread to 0) and fresh human escalations.
@@ -67,14 +84,23 @@ export function InboxList() {
         primed.current = true; // first load just seeds the snapshots
       }
 
-      setList(data);
+      setList((current) => {
+        if (!current) return data;
+        const freshIds = new Set(data.map((conversation) => conversation.id));
+        return [...data, ...current.filter((conversation) => !freshIds.has(conversation.id))];
+      });
+      if (!paginationStarted.current) setNextCursor(page.nextCursor);
       setFetchError(false);
     } catch {
+      if (signal.aborted) return;
       setFetchError(true); // transient — keep the last list, surface a retry affordance
+    } finally {
+      if (!signal.aborted) setFetching(false);
     }
   }, []);
 
-  usePolling(load, 4000);
+  const polling = usePolling(load, 15_000);
+  useServerEvents(() => polling.refresh());
 
   function toggleMuted() {
     const next = !muted;
@@ -97,10 +123,37 @@ export function InboxList() {
     router.refresh();
   }
 
+  async function loadMore() {
+    if (!nextCursor || loadingMore) return;
+    paginationStarted.current = true;
+    loadMoreController.current?.abort();
+    const controller = new AbortController();
+    loadMoreController.current = controller;
+    setLoadingMore(true);
+    try {
+      const page = await api.conversations(controller.signal, nextCursor);
+      if (controller.signal.aborted) return;
+      setList((current) => {
+        const merged = new Map((current ?? []).map((conversation) => [conversation.id, conversation]));
+        for (const conversation of page.conversations) merged.set(conversation.id, conversation);
+        return [...merged.values()];
+      });
+      setNextCursor(page.nextCursor);
+    } catch {
+      if (!controller.signal.aborted) setFetchError(true);
+    } finally {
+      if (!controller.signal.aborted) setLoadingMore(false);
+      if (loadMoreController.current === controller) loadMoreController.current = null;
+    }
+  }
+
   return (
-    <aside className="flex min-h-0 flex-col border-r border-border bg-card">
+    <aside className="flex h-full min-h-0 flex-col border-r border-border bg-card" aria-label={t.sidebar.inboxLabel}>
       <div className="flex items-center justify-between border-b border-border px-4 py-3.5">
-        <Logo markClassName="h-6 w-6 text-primary" />
+        <div>
+          <Logo markClassName="h-6 w-6 text-primary" />
+          <h1 className="sr-only">{t.sidebar.inboxLabel}</h1>
+        </div>
         <Button
           variant="ghost"
           size="icon-sm"
@@ -134,15 +187,15 @@ export function InboxList() {
         <Alert variant="destructive" className="m-3 w-auto py-2.5">
           <AlertDescription className="flex flex-row items-center justify-between gap-3">
             <span>{t.sidebar.fetchError}</span>
-            <Button variant="outline" size="xs" onClick={() => void load()}>
-              <RefreshCwIcon className="size-3" />
+            <Button variant="outline" size="xs" onClick={polling.refresh} disabled={fetching}>
+              <RefreshCwIcon className={cn('size-3', fetching && 'animate-spin')} />
               {t.common.retry}
             </Button>
           </AlertDescription>
         </Alert>
       )}
 
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto" aria-busy={fetching} aria-live="polite">
         {list === null &&
           Array.from({ length: 6 }).map((_, i) => (
             <div key={i} className="flex items-center gap-3 border-b border-border px-4 py-3">
@@ -167,6 +220,7 @@ export function InboxList() {
               <Link
                 key={c.id}
                 href={`/c/${c.id}`}
+                aria-current={active ? 'page' : undefined}
                 className={cn(
                   'flex gap-3 border-b border-border px-4 py-3 outline-none transition-colors hover:bg-accent focus-visible:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset',
                   active && 'bg-accent',
@@ -205,21 +259,38 @@ export function InboxList() {
               </Link>
             );
           })}
+        {list !== null && nextCursor && (
+          <div className="p-3 text-center">
+            <Button variant="outline" size="sm" onClick={() => void loadMore()} disabled={loadingMore}>
+              {loadingMore ? t.sidebar.loadingMore : t.sidebar.loadMore}
+            </Button>
+          </div>
+        )}
       </div>
 
-      <div className="flex items-center justify-between gap-1 border-t border-border p-2">
-        {isAdmin && (
-          <Button variant="ghost" size="sm" className="gap-1.5" asChild>
-            <Link href="/config">
-              <SettingsIcon className="size-4" />
-              {t.sidebar.settingsNav}
-            </Link>
-          </Button>
+      <div className="border-t border-border p-2">
+        {canManageSettings && (
+          <nav className="mb-1 grid grid-cols-2 gap-1" aria-label={t.sidebar.adminNavLabel}>
+            <Button variant="ghost" size="sm" className="min-w-0 justify-start gap-1.5" asChild>
+              <Link href="/analytics">
+                <BarChart3Icon className="size-4 shrink-0" />
+                <span className="truncate">{t.sidebar.analyticsNav}</span>
+              </Link>
+            </Button>
+            <Button variant="ghost" size="sm" className="min-w-0 justify-start gap-1.5" asChild>
+              <Link href="/config">
+                <SettingsIcon className="size-4 shrink-0" />
+                <span className="truncate">{t.sidebar.settingsNav}</span>
+              </Link>
+            </Button>
+          </nav>
         )}
-        <ThemeToggle />
-        <Button variant="ghost" size="icon-sm" onClick={signOut} aria-label={t.sidebar.signOut} title={t.sidebar.signOut}>
-          <LogOutIcon className="size-4" />
-        </Button>
+        <div className="flex items-center justify-end gap-1">
+          <ThemeToggle />
+          <Button variant="ghost" size="icon-sm" onClick={signOut} aria-label={t.sidebar.signOut} title={t.sidebar.signOut}>
+            <LogOutIcon className="size-4" />
+          </Button>
+        </div>
       </div>
     </aside>
   );

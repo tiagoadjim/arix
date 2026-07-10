@@ -4,11 +4,11 @@ Thanks for your interest in improving Arix!
 
 ## Development setup
 
-Requirements: Node 20+ (tested on Node 24), [pnpm](https://pnpm.io), and a local Postgres (or Docker).
+Requirements: Node 24.x LTS, [pnpm](https://pnpm.io), and a local Postgres (or Docker).
 
 ```bash
 pnpm install
-cp env.example .env         # fill in DATABASE_URL and AUTH_JWT_SECRET at minimum
+cp env.example .env         # fill in DATABASE_URL/AUTH_JWT_SECRET/SETUP_TOKEN; use a separate settings key in production
 pnpm dev:server             # terminal 1 — API + WhatsApp gateway
 pnpm dev:dashboard          # terminal 2 — dashboard on http://localhost:3000
 ```
@@ -16,8 +16,12 @@ pnpm dev:dashboard          # terminal 2 — dashboard on http://localhost:3000
 ## Before opening a PR
 
 ```bash
-pnpm -w typecheck           # TypeScript across both packages
-pnpm test                   # server test suite (vitest)
+pnpm typecheck              # TypeScript across both packages
+pnpm test                   # server + dashboard suites (Vitest)
+pnpm --filter @arix/dashboard test:e2e  # critical browser flows (Playwright)
+pnpm lint                   # ESLint; warnings are failures
+pnpm build                  # production builds for both packages
+pnpm audit:prod             # production dependency audit
 ```
 
 - Keep PRs focused: one change per PR.

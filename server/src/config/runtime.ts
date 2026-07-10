@@ -1,8 +1,19 @@
 import { logger } from '../logger';
 import { getSettings, upsertSetting } from '../db/repo';
-import { decryptSecret, encryptSecret } from './secret';
-import { SETTINGS_SCHEMA, type SettingDefinition } from './settings-schema';
-import type { Schedule } from '../agent/hours';
+import { decryptSecret, encryptSecret, needsReencryption } from './secret';
+import {
+  SETTINGS_SCHEMA,
+  isNumberWithinBounds,
+  isSecretKey,
+  type SettingDefinition,
+} from './settings-schema';
+import {
+  AR_TZ,
+  DEFAULT_DELIVERY_SCHEDULE,
+  isValidSchedule,
+  isValidTimezone,
+  type Schedule,
+} from '../agent/hours';
 import { normalizeEnabledSkills, DEFAULT_ENABLED_SKILLS } from '../skills/ids';
 import { normalizeMcpServers, type McpServerConfig } from '../mcp/types';
 
@@ -82,7 +93,7 @@ function parseRawValue(entry: SettingDefinition, raw: string): unknown {
       return /^(1|true|yes|on)$/i.test(raw);
     case 'number': {
       const n = Number(raw);
-      return Number.isFinite(n) ? n : entry.default;
+      return isNumberWithinBounds(entry, n) ? n : entry.default;
     }
     case 'json':
       try {
@@ -141,11 +152,15 @@ async function resolveAll(): Promise<ResolvedMeta> {
 async function resolve(): Promise<ResolvedMeta> {
   if (resolvedCache) return resolvedCache;
   if (!inflight) {
-    inflight = resolveAll().then((r) => {
-      resolvedCache = r;
-      inflight = null;
-      return r;
+    const startedAtVersion = version;
+    const current = resolveAll().then((resolved) => {
+      // A settings write may invalidate the cache while this DB read is in
+      // flight. Never let that older snapshot overwrite the newer generation.
+      if (version === startedAtVersion) resolvedCache = resolved;
+      if (inflight === current) inflight = null;
+      return resolved;
     });
+    inflight = current;
   }
   return inflight;
 }
@@ -180,6 +195,8 @@ export interface LlmSettings {
   reasoningSplit: boolean;
   thinkingDisabled: boolean;
   visionFallback: 'ask_details' | 'handoff';
+  inputCostPerMillion: number;
+  outputCostPerMillion: number;
   /** True once an API key is set (env or DB) — the agent can actually call out. */
   configured: boolean;
 }
@@ -195,6 +212,8 @@ export async function llm(): Promise<LlmSettings> {
     reasoningSplit: valueOf<boolean>(meta, 'llm.reasoning_split'),
     thinkingDisabled: valueOf<boolean>(meta, 'llm.thinking_disabled'),
     visionFallback: valueOf<'ask_details' | 'handoff'>(meta, 'llm.vision_fallback'),
+    inputCostPerMillion: valueOf<number>(meta, 'llm.input_cost_per_million'),
+    outputCostPerMillion: valueOf<number>(meta, 'llm.output_cost_per_million'),
     configured: apiKey.trim().length > 0,
   };
 }
@@ -211,6 +230,7 @@ export interface WooSettings {
    * response has no usable `permalink` — see skills/catalog.ts's productLink(). */
   productLinkTemplate: string;
   tolerance: number;
+  autoConfirmPayment: boolean;
   /** True once url + consumer key + consumer secret are all set. */
   configured: boolean;
 }
@@ -230,6 +250,7 @@ export async function woo(): Promise<WooSettings> {
     statusAfterDispatch: valueOf<string>(meta, 'wc.status_after_dispatch'),
     productLinkTemplate: valueOf<string>(meta, 'wc.product_link_template'),
     tolerance: valueOf<number>(meta, 'payment.tolerance'),
+    autoConfirmPayment: valueOf<boolean>(meta, 'payment.auto_confirm'),
     configured: Boolean(url.trim() && consumerKey.trim() && consumerSecret.trim()),
   };
 }
@@ -244,19 +265,21 @@ export interface BusinessProfile {
 
 export async function businessProfile(): Promise<BusinessProfile> {
   const meta = await resolve();
+  const timezone = valueOf<string>(meta, 'business.timezone');
   return {
     businessName: valueOf<string>(meta, 'business.name'),
     agentName: valueOf<string>(meta, 'agent.name'),
     language: valueOf<'es' | 'en'>(meta, 'agent.language'),
     discloseBot: valueOf<boolean>(meta, 'agent.disclose_bot'),
-    timezone: valueOf<string>(meta, 'business.timezone'),
+    timezone: isValidTimezone(timezone) ? timezone : AR_TZ,
   };
 }
 
 /** The weekly delivery schedule (see agent/hours.ts's Schedule shape). */
 export async function hoursConfig(): Promise<Schedule> {
   const meta = await resolve();
-  return valueOf<Schedule>(meta, 'business.hours');
+  const schedule = valueOf<unknown>(meta, 'business.hours');
+  return isValidSchedule(schedule) ? schedule : DEFAULT_DELIVERY_SCHEDULE;
 }
 
 export interface InfoBlocks {
@@ -334,6 +357,27 @@ export async function seedFromEnvOnFirstBoot(): Promise<void> {
       logger.warn({ err, key: entry.key }, 'settings: failed to seed from env');
     }
   }
+}
+
+/** Re-encrypt legacy/plaintext secret rows with the active versioned key. This
+ * never logs values and is safe to call on every boot. A row that cannot be
+ * decrypted is left untouched so an operator can restore the previous key. */
+export async function rotateStoredSecrets(): Promise<void> {
+  const dbRows = await loadDbRows();
+  const replacements: Array<{ key: string; value: string }> = [];
+  for (const [key, stored] of Object.entries(dbRows)) {
+    if (!isSecretKey(key) || !stored || !needsReencryption(stored)) continue;
+    try {
+      replacements.push({ key, value: encryptSecret(decryptSecret(stored)) });
+    } catch (err) {
+      logger.warn({ err, key }, 'settings: could not rotate stored secret; keeping the existing envelope');
+    }
+  }
+  for (const replacement of replacements) {
+    await upsertSetting(replacement.key, replacement.value);
+    logger.info({ key: replacement.key }, 'settings: rotated secret to the active encryption key');
+  }
+  if (replacements.length > 0) invalidate();
 }
 
 /** Keys whose seedEnv is currently set in the environment — later phases

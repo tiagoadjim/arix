@@ -19,9 +19,33 @@ import {
   infoBlocks,
   envLockedKeys,
   seedFromEnvOnFirstBoot,
+  rotateStoredSecrets,
 } from '../src/config/runtime';
-import { encryptSecret } from '../src/config/secret';
+import { decryptSecret, encryptSecret } from '../src/config/secret';
+import { config } from '../src/config';
 import { DEFAULT_DELIVERY_SCHEDULE } from '../src/agent/hours';
+
+type MutableEncryptionConfig = {
+  SETTINGS_ENCRYPTION_KEY?: string;
+  SETTINGS_ENCRYPTION_KEY_PREVIOUS?: string;
+};
+
+async function withEncryptionKeys<T>(
+  overrides: MutableEncryptionConfig,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const mutable = config as MutableEncryptionConfig;
+  const previous = {
+    SETTINGS_ENCRYPTION_KEY: mutable.SETTINGS_ENCRYPTION_KEY,
+    SETTINGS_ENCRYPTION_KEY_PREVIOUS: mutable.SETTINGS_ENCRYPTION_KEY_PREVIOUS,
+  };
+  Object.assign(mutable, overrides);
+  try {
+    return await fn();
+  } finally {
+    Object.assign(mutable, previous);
+  }
+}
 
 /** Temporarily set/unset env vars for the duration of `fn`, then restore. */
 async function withEnv<T>(overrides: Record<string, string | undefined>, fn: () => Promise<T>): Promise<T> {
@@ -139,7 +163,7 @@ describe('secrets are decrypted when read from the DB', () => {
       getSettings.mockResolvedValue({ 'llm.api_key': enc });
       invalidate();
       const cfg = await llm();
-      expect(cfg.apiKey).not.toContain('enc:v1:');
+      expect(cfg.apiKey).not.toContain('enc:v2:');
       expect(cfg.apiKey).toBe('sk-should-be-decrypted');
     });
   });
@@ -172,6 +196,27 @@ describe('caching + invalidate()', () => {
     getSettings.mockResolvedValue({});
     await Promise.all([businessProfile(), woo(), llm(), infoBlocks()]);
     expect(getSettings).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not let a stale in-flight read repopulate the cache after invalidate()', async () => {
+    let releaseOld!: (rows: Record<string, string>) => void;
+    const oldRead = new Promise<Record<string, string>>((resolve) => {
+      releaseOld = resolve;
+    });
+    getSettings
+      .mockReturnValueOnce(oldRead)
+      .mockResolvedValueOnce({ 'agent.name': 'Fresh generation' });
+
+    const staleCall = businessProfile();
+    await vi.waitFor(() => expect(getSettings).toHaveBeenCalledTimes(1));
+    invalidate();
+    const fresh = await businessProfile();
+    expect(fresh.agentName).toBe('Fresh generation');
+
+    releaseOld({ 'agent.name': 'Stale generation' });
+    expect((await staleCall).agentName).toBe('Stale generation');
+    expect((await businessProfile()).agentName).toBe('Fresh generation');
+    expect(getSettings).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -236,7 +281,8 @@ describe('seedFromEnvOnFirstBoot', () => {
       getSettings.mockResolvedValue({});
       await seedFromEnvOnFirstBoot();
       const call = upsertSetting.mock.calls.find((c) => c[0] === 'llm.api_key');
-      expect(call?.[1]).toMatch(/^enc:v1:/);
+      expect(call?.[1]).toMatch(/^enc:v2:[A-Za-z0-9_-]{12}:/);
+      expect(decryptSecret(call?.[1] as string)).toBe('sk-seed-me');
     });
   });
 
@@ -255,5 +301,64 @@ describe('seedFromEnvOnFirstBoot', () => {
       expect(upsertSetting).not.toHaveBeenCalledWith('agent.name', expect.anything());
       expect(upsertSetting).not.toHaveBeenCalledWith('info.payment', expect.anything());
     });
+  });
+});
+
+describe('rotateStoredSecrets', () => {
+  const oldKey = 'settings-old-key-0123456789abcdef-0123456789';
+  const newKey = 'settings-new-key-0123456789abcdef-0123456789';
+
+  it('rewrites plaintext and previous-key secret rows under the active v2 key in one boot pass', async () => {
+    let previousKeyEnvelope = '';
+    await withEncryptionKeys(
+      { SETTINGS_ENCRYPTION_KEY: oldKey, SETTINGS_ENCRYPTION_KEY_PREVIOUS: undefined },
+      async () => {
+        previousKeyEnvelope = encryptSecret('sk-on-old-key');
+      },
+    );
+
+    await withEncryptionKeys(
+      { SETTINGS_ENCRYPTION_KEY: newKey, SETTINGS_ENCRYPTION_KEY_PREVIOUS: oldKey },
+      async () => {
+        getSettings.mockResolvedValue({
+          'llm.api_key': previousKeyEnvelope,
+          'wc.consumer_secret': 'cs-hand-edited-plaintext',
+          'business.name': 'not-a-secret',
+        });
+        const versionBefore = settingsVersion();
+
+        await rotateStoredSecrets();
+
+        expect(upsertSetting).toHaveBeenCalledTimes(2);
+        const replacements = Object.fromEntries(upsertSetting.mock.calls);
+        expect(replacements['llm.api_key']).toMatch(/^enc:v2:[A-Za-z0-9_-]{12}:/);
+        expect(replacements['wc.consumer_secret']).toMatch(/^enc:v2:[A-Za-z0-9_-]{12}:/);
+        expect(decryptSecret(replacements['llm.api_key'] as string)).toBe('sk-on-old-key');
+        expect(decryptSecret(replacements['wc.consumer_secret'] as string)).toBe(
+          'cs-hand-edited-plaintext',
+        );
+        expect(upsertSetting).not.toHaveBeenCalledWith('business.name', expect.anything());
+        expect(settingsVersion()).toBe(versionBefore + 1);
+      },
+    );
+  });
+
+  it('does not rewrite active-key rows and leaves an undecryptable old envelope untouched', async () => {
+    await withEncryptionKeys(
+      { SETTINGS_ENCRYPTION_KEY: newKey, SETTINGS_ENCRYPTION_KEY_PREVIOUS: undefined },
+      async () => {
+        const current = encryptSecret('already-current');
+        getSettings.mockResolvedValue({
+          'llm.api_key': current,
+          'wc.consumer_secret': 'enc:v2:missing-key-id:valid:looking:parts',
+        });
+        const versionBefore = settingsVersion();
+
+        await rotateStoredSecrets();
+
+        expect(upsertSetting).not.toHaveBeenCalled();
+        expect(settingsVersion()).toBe(versionBefore);
+      },
+    );
   });
 });

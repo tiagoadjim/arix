@@ -16,6 +16,12 @@ import { AR_TZ, DEFAULT_DELIVERY_SCHEDULE, type Schedule } from '../agent/hours'
 
 export type SettingType = 'string' | 'boolean' | 'number' | 'json' | 'enum';
 
+/** Generous safety ceilings: far above normal commercial rates/tolerances,
+ * but finite enough to reject accidental exponent/zero mistakes and abusive
+ * API writes before they affect analytics or receipt matching. */
+export const MAX_LLM_COST_PER_MILLION_USD = 10_000;
+export const MAX_PAYMENT_TOLERANCE = 1_000;
+
 export interface SettingDefinition<T = unknown> {
   /** Dot-namespaced DB row key, e.g. "llm.api_key". */
   key: string;
@@ -30,6 +36,9 @@ export interface SettingDefinition<T = unknown> {
   default: T;
   /** Allowed values, only for type: 'enum'. */
   enumValues?: readonly string[];
+  /** Inclusive numeric bounds, only meaningful for type: 'number'. */
+  min?: number;
+  max?: number;
   /** Human label (dashboard UI, later phases). */
   label: string;
 }
@@ -95,6 +104,24 @@ export const SETTINGS_SCHEMA: readonly SettingDefinition[] = [
     enumValues: ['ask_details', 'handoff'],
     default: 'ask_details',
     label: 'What to do when the model/config has no vision support',
+  },
+  {
+    key: 'llm.input_cost_per_million',
+    group: 'llm',
+    type: 'number',
+    min: 0,
+    max: MAX_LLM_COST_PER_MILLION_USD,
+    default: 0,
+    label: 'Input-token cost in USD per million tokens (optional estimate)',
+  },
+  {
+    key: 'llm.output_cost_per_million',
+    group: 'llm',
+    type: 'number',
+    min: 0,
+    max: MAX_LLM_COST_PER_MILLION_USD,
+    default: 0,
+    label: 'Output-token cost in USD per million tokens (optional estimate)',
   },
 
   // ---- WooCommerce ------------------------------------------------------------
@@ -171,9 +198,19 @@ export const SETTINGS_SCHEMA: readonly SettingDefinition[] = [
     key: 'payment.tolerance',
     group: 'payment',
     type: 'number',
+    min: 0,
+    max: MAX_PAYMENT_TOLERANCE,
     default: 1,
     seedEnv: 'PAYMENT_AMOUNT_TOLERANCE',
     label: 'Absolute amount tolerance when matching a transfer receipt',
+  },
+  {
+    key: 'payment.auto_confirm',
+    group: 'payment',
+    type: 'boolean',
+    default: false,
+    seedEnv: 'PAYMENT_AUTO_CONFIRM',
+    label: 'Automatically mark matched receipts as paid (unsafe unless independently reconciled)',
   },
 
   // ---- Business profile ---------------------------------------------------------
@@ -301,6 +338,15 @@ export const SETTINGS_SCHEMA: readonly SettingDefinition[] = [
 export const SETTINGS_BY_KEY: ReadonlyMap<string, SettingDefinition> = new Map(
   SETTINGS_SCHEMA.map((s) => [s.key, s]),
 );
+
+/** True for a finite number inside the schema entry's inclusive bounds. */
+export function isNumberWithinBounds(entry: SettingDefinition, value: number): boolean {
+  return (
+    Number.isFinite(value) &&
+    (entry.min === undefined || value >= entry.min) &&
+    (entry.max === undefined || value <= entry.max)
+  );
+}
 
 /** True if `key` is registered and marked as holding a secret value. */
 export function isSecretKey(key: string): boolean {

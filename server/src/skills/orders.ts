@@ -1,4 +1,4 @@
-import { woo, phoneSuffix, type WcOrder } from '../integrations/woocommerce';
+import { woo, normalizePhone, type WcOrder } from '../integrations/woocommerce';
 import { setConversationEmail } from '../db/repo';
 import { logger } from '../logger';
 import type { ToolSpec } from '../agent/tool-spec';
@@ -67,9 +67,9 @@ export function checkIdentity(
   ctx: ToolContext,
   email?: string,
 ): { verified: boolean; emailProvided: boolean; byEmail: boolean } {
-  const chatSuffix = phoneSuffix(ctx.phone);
-  const orderSuffix = phoneSuffix(order.billing?.phone);
-  const phoneMatch = Boolean(chatSuffix && orderSuffix && chatSuffix === orderSuffix);
+  const chatPhone = normalizePhone(ctx.phone);
+  const orderPhone = normalizePhone(order.billing?.phone);
+  const phoneMatch = Boolean(chatPhone && orderPhone && chatPhone === orderPhone);
 
   const e = (email ?? '').trim().toLowerCase();
   const orderEmail = (order.billing?.email ?? '').trim().toLowerCase();
@@ -91,6 +91,7 @@ export async function persistVerifiedEmail(
   email: string,
 ): Promise<void> {
   if (!identity.byEmail || !email) return;
+  if (ctx.signal?.aborted) throw ctx.signal.reason;
   await setConversationEmail(ctx.conversationId, email.trim().toLowerCase()).catch((err) =>
     logger.warn({ err }, 'failed to store customer email'),
   );
@@ -131,9 +132,9 @@ export function orderForStaff(order: WcOrder) {
 
 /** Build a customer-safe summary of an order + whether the chat phone matches. */
 export function orderSummary(order: WcOrder, ctx: ToolContext) {
-  const chatSuffix = phoneSuffix(ctx.phone);
-  const orderSuffix = phoneSuffix(order.billing?.phone);
-  const phoneMatches = chatSuffix && orderSuffix ? chatSuffix === orderSuffix : null;
+  const chatPhone = normalizePhone(ctx.phone);
+  const orderPhone = normalizePhone(order.billing?.phone);
+  const phoneMatches = chatPhone && orderPhone ? chatPhone === orderPhone : null;
   return {
     found: true,
     number: order.number,
@@ -181,7 +182,7 @@ export const orderTools: ToolSpec[] = [
       const orderNumber = String(args.order_number ?? '').trim();
       const email = String(args.email ?? '').trim();
       if (!orderNumber) return { found: false, reason: 'missing_order_number' };
-      const order = await woo.resolveOrderByNumber(orderNumber);
+      const order = await woo.resolveOrderByNumber(orderNumber, ctx.signal);
       if (!order) return { found: false, number: orderNumber };
 
       // Privacy gate: order numbers are guessable. Only reveal PII/total when the

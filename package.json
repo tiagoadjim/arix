@@ -5,20 +5,30 @@
   "description": "Arix — open-source AI sales agent for WooCommerce over WhatsApp (Baileys + your LLM of choice + Postgres)",
   "type": "module",
   "engines": {
-    "node": ">=22.19"
+    "node": ">=24 <25"
   },
   "scripts": {
     "dev:server": "pnpm --filter @arix/server dev",
     "dev:dashboard": "pnpm --filter @arix/dashboard dev",
     "start:server": "pnpm --filter @arix/server start",
     "typecheck": "pnpm --filter @arix/server typecheck && pnpm --filter @arix/dashboard typecheck",
-    "test": "pnpm --filter @arix/server test",
-    "lint": "eslint ."
+    "test": "pnpm --filter @arix/server test && pnpm --filter @arix/dashboard test",
+    "build": "pnpm --filter @arix/server build && pnpm --filter @arix/dashboard build",
+    "lint": "eslint . --max-warnings 0",
+    "audit:prod": "pnpm audit --prod"
   },
   "packageManager": "pnpm@10.30.0",
+  "pnpm": {
+    "overrides": {
+      "postcss": "8.5.16"
+    }
+  },
   "devDependencies": {
-    "@eslint/js": "^10.0.1",
-    "eslint": "^10.6.0",
+    "@eslint/js": "^9.39.4",
+    "@next/eslint-plugin-next": "^15.1.3",
+    "eslint": "^9.39.4",
+    "eslint-plugin-react": "^7.37.5",
+    "eslint-plugin-react-hooks": "^5.2.0",
     "typescript-eslint": "^8.63.0"
   }
 }

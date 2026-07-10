@@ -1,10 +1,9 @@
-import { InboxList } from './inbox-list';
+import { cookies } from 'next/headers';
+import { getValidSession, SESSION_COOKIE } from '@/lib/auth';
+import { PanelShell } from './panel-shell';
 
-export default function PanelLayout({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="grid h-screen grid-cols-[360px_1fr] bg-background">
-      <InboxList />
-      <main className="flex min-h-0 flex-col">{children}</main>
-    </div>
-  );
+export default async function PanelLayout({ children }: { children: React.ReactNode }) {
+  const cookieStore = await cookies();
+  const session = await getValidSession(cookieStore.get(SESSION_COOKIE)?.value);
+  return <PanelShell canManageSettings={session?.role === 'admin'}>{children}</PanelShell>;
 }

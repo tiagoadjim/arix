@@ -11,7 +11,7 @@ import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Separator } from '@/components/ui/separator';
 import { HoursEditor } from './hours-editor';
-import { booleanValue, compactUpdates, findDto, plainUpdate, stringValue } from './settings-form-utils';
+import { booleanValue, compactUpdates, findDto, isReadOnly, plainUpdate, stringValue } from './settings-form-utils';
 
 export interface BusinessFormValues {
   businessName: string;
@@ -106,6 +106,13 @@ interface BusinessFieldsProps {
   onChange: (values: BusinessFormValues) => void;
   uiLanguage: Locale;
   onUiLanguageChange: (locale: Locale) => void;
+  dtos?: {
+    business?: SettingDto[];
+    agent?: SettingDto[];
+    info?: SettingDto[];
+    dispatch?: SettingDto[];
+    compliance?: SettingDto[];
+  };
   disabled?: boolean;
 }
 
@@ -119,6 +126,7 @@ export function BusinessFields({
   onChange,
   uiLanguage,
   onUiLanguageChange,
+  dtos = {},
   disabled,
 }: BusinessFieldsProps) {
   const { t } = useT();
@@ -136,19 +144,19 @@ export function BusinessFields({
             id="business-name"
             value={values.businessName}
             onChange={(e) => set('businessName', e.target.value)}
-            disabled={disabled}
+            disabled={disabled || isReadOnly('business.name', dtos.business)}
           />
         </div>
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="agent-name">{t.settings.business.agentNameLabel}</Label>
-          <Input id="agent-name" value={values.agentName} onChange={(e) => set('agentName', e.target.value)} disabled={disabled} />
+          <Input id="agent-name" value={values.agentName} onChange={(e) => set('agentName', e.target.value)} disabled={disabled || isReadOnly('agent.name', dtos.agent)} />
         </div>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="agent-language">{t.settings.business.agentLanguageLabel}</Label>
-          <Select value={values.agentLanguage} onValueChange={(v) => set('agentLanguage', v === 'en' ? 'en' : 'es')} disabled={disabled}>
+          <Select value={values.agentLanguage} onValueChange={(v) => set('agentLanguage', v === 'en' ? 'en' : 'es')} disabled={disabled || isReadOnly('agent.language', dtos.agent)}>
             <SelectTrigger id="agent-language" className="w-full">
               <SelectValue />
             </SelectTrigger>
@@ -178,7 +186,7 @@ export function BusinessFields({
           <span className="text-sm font-normal">{t.settings.business.discloseBotLabel}</span>
           <span className="text-xs font-normal text-muted-foreground">{t.settings.business.discloseBotHint}</span>
         </span>
-        <Switch checked={values.discloseBot} onCheckedChange={(v) => set('discloseBot', v)} disabled={disabled} />
+        <Switch checked={values.discloseBot} onCheckedChange={(v) => set('discloseBot', v)} disabled={disabled || isReadOnly('agent.disclose_bot', dtos.agent)} />
       </Label>
 
       <div className="flex flex-col gap-1.5">
@@ -188,7 +196,7 @@ export function BusinessFields({
           list="common-timezones"
           value={values.timezone}
           onChange={(e) => set('timezone', e.target.value)}
-          disabled={disabled}
+          disabled={disabled || isReadOnly('business.timezone', dtos.business)}
         />
         <datalist id="common-timezones">
           {COMMON_TIMEZONES.map((tz) => (
@@ -205,7 +213,7 @@ export function BusinessFields({
           <p className="text-sm font-medium">{t.settings.business.hoursTitle}</p>
           <p className="text-xs text-muted-foreground">{t.settings.business.hoursHint}</p>
         </div>
-        <HoursEditor value={values.hours} onChange={(hours) => set('hours', hours)} disabled={disabled} />
+        <HoursEditor value={values.hours} onChange={(hours) => set('hours', hours)} disabled={disabled || isReadOnly('business.hours', dtos.business)} />
       </div>
 
       <Separator />
@@ -218,7 +226,7 @@ export function BusinessFields({
             rows={4}
             value={values.infoPayment}
             onChange={(e) => set('infoPayment', e.target.value)}
-            disabled={disabled}
+            disabled={disabled || isReadOnly('info.payment', dtos.info)}
           />
           <p className="text-xs text-muted-foreground">{t.settings.business.infoPaymentHint}</p>
         </div>
@@ -229,7 +237,7 @@ export function BusinessFields({
             rows={4}
             value={values.infoShipping}
             onChange={(e) => set('infoShipping', e.target.value)}
-            disabled={disabled}
+            disabled={disabled || isReadOnly('info.shipping', dtos.info)}
           />
           <p className="text-xs text-muted-foreground">{t.settings.business.infoShippingHint}</p>
         </div>
@@ -242,7 +250,7 @@ export function BusinessFields({
           rows={4}
           value={values.infoGeneral}
           onChange={(e) => set('infoGeneral', e.target.value)}
-          disabled={disabled}
+          disabled={disabled || isReadOnly('info.general', dtos.info)}
         />
         <p className="text-xs text-muted-foreground">{t.settings.business.infoGeneralHint}</p>
       </div>
@@ -254,7 +262,7 @@ export function BusinessFields({
           rows={4}
           value={values.complianceRules}
           onChange={(e) => set('complianceRules', e.target.value)}
-          disabled={disabled}
+          disabled={disabled || isReadOnly('compliance.rules', dtos.compliance)}
         />
         <p className="text-xs text-muted-foreground">{t.settings.business.complianceHint}</p>
       </div>
@@ -266,7 +274,7 @@ export function BusinessFields({
           rows={5}
           value={values.dispatchTemplate}
           onChange={(e) => set('dispatchTemplate', e.target.value)}
-          disabled={disabled}
+          disabled={disabled || isReadOnly('dispatch.template', dtos.dispatch)}
         />
         <p className="text-xs text-muted-foreground">{t.settings.business.dispatchTemplateHint}</p>
       </div>

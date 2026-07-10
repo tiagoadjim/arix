@@ -5,26 +5,87 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // doesn't need) and observe the warnedUnconfigured clear-on-configured path.
 const {
   getConversationMock,
+  getOrCreateConversationMock,
   getRecentMessagesMock,
-  insertOutboundMessageMock,
+  insertInboundMessageMock,
+  prepareOutboundMessageMock,
+  prepareOutboundBatchMock,
+  claimMessageForSendingMock,
+  cancelOutboundMessageMock,
+  cancelAgentOutboxForTurnMock,
+  getAgentOutboxForTurnMock,
+  getRecoverableHumanOutboxMock,
+  getMessageByClientIdMock,
+  markMessageSentMock,
+  markMessageFailedMock,
   touchConversationMock,
 } = vi.hoisted(() => ({
   getConversationMock: vi.fn(),
+  getOrCreateConversationMock: vi.fn(),
   getRecentMessagesMock: vi.fn(),
-  insertOutboundMessageMock: vi.fn(),
+  insertInboundMessageMock: vi.fn(),
+  prepareOutboundMessageMock: vi.fn(),
+  prepareOutboundBatchMock: vi.fn(),
+  claimMessageForSendingMock: vi.fn(),
+  cancelOutboundMessageMock: vi.fn(),
+  cancelAgentOutboxForTurnMock: vi.fn(),
+  getAgentOutboxForTurnMock: vi.fn(),
+  getRecoverableHumanOutboxMock: vi.fn(),
+  getMessageByClientIdMock: vi.fn(),
+  markMessageSentMock: vi.fn(),
+  markMessageFailedMock: vi.fn(),
   touchConversationMock: vi.fn(),
 }));
 vi.mock('../src/db/repo', () => ({
   getConversation: getConversationMock,
   getRecentMessages: getRecentMessagesMock,
-  insertOutboundMessage: insertOutboundMessageMock,
+  prepareOutboundMessage: prepareOutboundMessageMock,
+  prepareOutboundBatch: prepareOutboundBatchMock,
+  claimMessageForSending: claimMessageForSendingMock,
+  cancelOutboundMessage: cancelOutboundMessageMock,
+  cancelAgentOutboxForTurn: cancelAgentOutboxForTurnMock,
+  getAgentOutboxForTurn: getAgentOutboxForTurnMock,
+  getRecoverableHumanOutbox: getRecoverableHumanOutboxMock,
+  getMessageByClientId: getMessageByClientIdMock,
+  markMessageSent: markMessageSentMock,
+  markMessageFailed: markMessageFailedMock,
   touchConversation: touchConversationMock,
   // Unused by flush(), but messages.ts imports them too — stubbed so the
   // mock factory satisfies every named import.
-  getOrCreateConversation: vi.fn(),
-  getRecentBotConversations: vi.fn(),
-  insertInboundMessage: vi.fn(),
+  getOrCreateConversation: getOrCreateConversationMock,
+  getUnansweredBotConversations: vi.fn(),
+  getRecoverableAgentOutbox: vi.fn().mockResolvedValue([]),
+  isAgentOutboxTurnCurrent: vi.fn().mockResolvedValue(true),
+  insertInboundMessage: insertInboundMessageMock,
 }));
+
+async function claimLatestPrepared(id: string): Promise<Message | null> {
+  for (const result of [...prepareOutboundMessageMock.mock.results].reverse()) {
+    if (result.type !== 'return') continue;
+    const prepared = await Promise.resolve(result.value) as { message?: Message } | undefined;
+    if (prepared?.message?.id === id) {
+      return { ...prepared.message, send_status: 'sending', send_attempt_id: 'attempt-1' };
+    }
+  }
+  return null;
+}
+
+async function batchFromSingle(input: {
+  conversationId: string;
+  sender: string;
+  messages: Array<{ body: string; clientId: string; waMessageId: string }>;
+}): Promise<Message[]> {
+  return Promise.all(
+    input.messages.map(async (item) => {
+      const prepared = await prepareOutboundMessageMock({
+        conversationId: input.conversationId,
+        sender: input.sender,
+        ...item,
+      }) as { message: Message };
+      return prepared.message;
+    }),
+  );
+}
 
 const { runAgentMock } = vi.hoisted(() => ({ runAgentMock: vi.fn() }));
 vi.mock('../src/agent/agent', () => ({ runAgent: runAgentMock }));
@@ -47,6 +108,7 @@ import {
 import type { Message } from '../src/types';
 import type { ConvState } from '../src/handlers/messages';
 import type { WhatsAppGateway } from '../src/whatsapp/socket';
+import type { WAMessage, WASocket } from 'baileys';
 
 const inMsg = (msg_type: string): Message => ({ direction: 'in', msg_type } as unknown as Message);
 const outMsg = (): Message => ({ direction: 'out', msg_type: 'text' } as unknown as Message);
@@ -83,6 +145,9 @@ describe('evictIdleStates', () => {
     timer: null,
     processing: false,
     dirty: false,
+    inboundGeneration: 0,
+    processedGeneration: 0,
+    inboundCursor: null,
     lastImage: null,
     imageAt: 0,
     lastTouchedAt: 0,
@@ -147,6 +212,9 @@ describe('pruneWarnedUnconfigured', () => {
     timer: null,
     processing: false,
     dirty: false,
+    inboundGeneration: 0,
+    processedGeneration: 0,
+    inboundCursor: null,
     lastImage: null,
     imageAt: 0,
     lastTouchedAt: 0,
@@ -211,7 +279,29 @@ describe('MessageRouter.flush() — warnedUnconfigured clears once the LLM becom
   beforeEach(() => {
     getConversationMock.mockReset();
     getRecentMessagesMock.mockReset();
-    insertOutboundMessageMock.mockReset().mockResolvedValue({ id: 'out1' });
+    prepareOutboundMessageMock.mockReset().mockImplementation(async (input: { conversationId: string; body: string; clientId: string; waMessageId: string }) => ({
+      message: {
+        id: 'out1',
+        conversation_id: input.conversationId,
+        direction: 'out',
+        sender: 'agent',
+        body: input.body,
+        msg_type: 'text',
+        client_id: input.clientId,
+        wa_message_id: input.waMessageId,
+        send_status: 'pending',
+      },
+      created: true,
+    }));
+    prepareOutboundBatchMock.mockReset().mockImplementation(batchFromSingle);
+    claimMessageForSendingMock.mockReset().mockImplementation(claimLatestPrepared);
+    cancelOutboundMessageMock.mockReset().mockResolvedValue(undefined);
+    cancelAgentOutboxForTurnMock.mockReset().mockResolvedValue(undefined);
+    getAgentOutboxForTurnMock.mockReset().mockResolvedValue([]);
+    getRecoverableHumanOutboxMock.mockReset().mockResolvedValue([]);
+    getMessageByClientIdMock.mockReset().mockResolvedValue(null);
+    markMessageSentMock.mockReset().mockResolvedValue(true);
+    markMessageFailedMock.mockReset().mockResolvedValue(true);
     touchConversationMock.mockReset().mockResolvedValue(undefined);
     runAgentMock.mockReset().mockResolvedValue('ok');
     llmMock.mockReset();
@@ -256,5 +346,222 @@ describe('MessageRouter.flush() — warnedUnconfigured clears once the LLM becom
     getRecentMessagesMock.mockResolvedValue(inboundHistory('conv2'));
     await router.flush('conv2');
     expect(loggerWarnMock).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe('MessageRouter.flush() — inbound generation race', () => {
+  type Flushable = { flush(conversationId: string): Promise<void> };
+  type Inspectable = { states: Map<string, ConvState> };
+
+  const conversation = {
+    id: 'conv-race',
+    account_id: 'acc',
+    wa_jid: '5491100000000@s.whatsapp.net',
+    phone: '5491100000000',
+    customer_name: 'Test',
+    customer_email: null,
+    mode: 'bot',
+    assigned_to: null,
+    status: 'open',
+    escalation_reason: null,
+    unread_count: 0,
+    last_message_at: null,
+    last_message_preview: null,
+    created_at: '',
+    updated_at: '',
+  };
+
+  const waInbound = (id: string, body: string) =>
+    ({
+      key: { remoteJid: conversation.wa_jid, id },
+      message: { conversation: body },
+      pushName: 'Test',
+    }) as WAMessage;
+
+  it('drops a stale model answer and processes the inbound that arrived while runAgent was pending', async () => {
+    const persisted: Message[] = [];
+    const gateway = {
+      indicateTyping: vi.fn().mockResolvedValue(undefined),
+      sendText: vi.fn().mockResolvedValue('wa-out-1'),
+    } as unknown as WhatsAppGateway;
+    const router = new MessageRouter(gateway);
+    const flushable = router as unknown as Flushable;
+    const inspectable = router as unknown as Inspectable;
+
+    getConversationMock.mockReset().mockResolvedValue(conversation);
+    getOrCreateConversationMock.mockReset().mockResolvedValue(conversation);
+    touchConversationMock.mockReset().mockResolvedValue(undefined);
+    prepareOutboundMessageMock.mockReset().mockImplementation(async (input: { conversationId: string; body: string; clientId: string; waMessageId: string }) => ({
+      message: {
+        id: 'out-1',
+        conversation_id: input.conversationId,
+        direction: 'out',
+        sender: 'agent',
+        body: input.body,
+        msg_type: 'text',
+        client_id: input.clientId,
+        wa_message_id: input.waMessageId,
+        send_status: 'pending',
+      },
+      created: true,
+    }));
+    prepareOutboundBatchMock.mockReset().mockImplementation(batchFromSingle);
+    claimMessageForSendingMock.mockReset().mockImplementation(claimLatestPrepared);
+    cancelOutboundMessageMock.mockReset().mockResolvedValue(undefined);
+    cancelAgentOutboxForTurnMock.mockReset().mockResolvedValue(undefined);
+    getAgentOutboxForTurnMock.mockReset().mockResolvedValue([]);
+    getRecoverableHumanOutboxMock.mockReset().mockResolvedValue([]);
+    getMessageByClientIdMock.mockReset().mockResolvedValue(null);
+    markMessageSentMock.mockReset().mockResolvedValue(true);
+    markMessageFailedMock.mockReset().mockResolvedValue(true);
+    llmMock.mockReset().mockResolvedValue({ configured: true });
+    getRecentMessagesMock.mockReset().mockImplementation(async (_id: string, limit?: number) =>
+      limit ? persisted.slice(-limit) : [...persisted],
+    );
+    insertInboundMessageMock.mockReset().mockImplementation(async (input: { body: string }) => {
+      const message = {
+        id: `m${persisted.length + 1}`,
+        conversation_id: conversation.id,
+        direction: 'in',
+        sender: 'customer',
+        body: input.body,
+        msg_type: 'text',
+      } as unknown as Message;
+      persisted.push(message);
+      return message;
+    });
+
+    let releaseOldReply!: (reply: string) => void;
+    const oldReplyPending = new Promise<string>((resolve) => {
+      releaseOldReply = resolve;
+    });
+    runAgentMock
+      .mockReset()
+      .mockReturnValueOnce(oldReplyPending)
+      .mockResolvedValueOnce('respuesta para los dos mensajes');
+
+    await router.handle({} as WASocket, waInbound('wa-in-1', 'primer mensaje'));
+    const firstFlush = flushable.flush(conversation.id);
+    // runAgent has now captured generation 1 and is still thinking.
+    await vi.waitFor(() => expect(runAgentMock).toHaveBeenCalledTimes(1));
+
+    await router.handle({} as WASocket, waInbound('wa-in-2', 'dato adicional'));
+    releaseOldReply('respuesta obsoleta');
+    await firstFlush;
+
+    expect(gateway.sendText).not.toHaveBeenCalled();
+    // The stale run schedules the newer generation instead of letting the old
+    // outbound become the DB tail and hide it.
+    expect(inspectable.states.get(conversation.id)?.timer).not.toBeNull();
+
+    // Drive the guaranteed follow-up directly (it also clears the tracked
+    // 250ms retry timer), keeping this race test independent of wall-clock time.
+    await flushable.flush(conversation.id);
+
+    expect(runAgentMock).toHaveBeenCalledTimes(2);
+    const secondHistory = runAgentMock.mock.calls[1]?.[1] as Message[];
+    expect(secondHistory.map((m) => m.body)).toEqual(['primer mensaje', 'dato adicional']);
+    expect(gateway.sendText).toHaveBeenCalledTimes(1);
+    expect(gateway.sendText).toHaveBeenCalledWith(
+      conversation.wa_jid,
+      'respuesta para los dos mensajes',
+      expect.any(String),
+    );
+  });
+
+  it('keeps the newer inbound pending when an older send was already in flight', async () => {
+    const persisted: Message[] = [];
+    let releaseOldSend!: (waId: string) => void;
+    const oldSendPending = new Promise<string>((resolve) => {
+      releaseOldSend = resolve;
+    });
+    const gateway = {
+      indicateTyping: vi.fn().mockResolvedValue(undefined),
+      sendText: vi.fn().mockReturnValueOnce(oldSendPending).mockResolvedValueOnce('wa-out-2'),
+    } as unknown as WhatsAppGateway;
+    const router = new MessageRouter(gateway);
+    const flushable = router as unknown as Flushable;
+
+    getConversationMock.mockReset().mockResolvedValue(conversation);
+    getOrCreateConversationMock.mockReset().mockResolvedValue(conversation);
+    touchConversationMock.mockReset().mockResolvedValue(undefined);
+    llmMock.mockReset().mockResolvedValue({ configured: true });
+    getRecentMessagesMock.mockReset().mockImplementation(async (_id: string, limit?: number) =>
+      limit ? persisted.slice(-limit) : [...persisted],
+    );
+    insertInboundMessageMock.mockReset().mockImplementation(async (input: { body: string }) => {
+      const message = {
+        id: `m${persisted.filter((m) => m.direction === 'in').length + 1}`,
+        conversation_id: conversation.id,
+        direction: 'in',
+        sender: 'customer',
+        body: input.body,
+        msg_type: 'text',
+      } as unknown as Message;
+      persisted.push(message);
+      return message;
+    });
+    const outboundByClientId = new Map<string, Message>();
+    prepareOutboundMessageMock.mockReset().mockImplementation(async (input: {
+      conversationId: string;
+      body: string;
+      clientId: string;
+      waMessageId: string;
+    }) => {
+      const message = {
+        id: `o${persisted.filter((m) => m.direction === 'out').length + 1}`,
+        conversation_id: conversation.id,
+        direction: 'out',
+        sender: 'agent',
+        body: input.body,
+        msg_type: 'text',
+        client_id: input.clientId,
+        wa_message_id: input.waMessageId,
+        send_status: 'pending',
+      } as unknown as Message;
+      persisted.push(message);
+      outboundByClientId.set(input.clientId, message);
+      return { message, created: true };
+    });
+    prepareOutboundBatchMock.mockReset().mockImplementation(batchFromSingle);
+    claimMessageForSendingMock.mockReset().mockImplementation(claimLatestPrepared);
+    cancelOutboundMessageMock.mockReset().mockResolvedValue(undefined);
+    cancelAgentOutboxForTurnMock.mockReset().mockResolvedValue(undefined);
+    getAgentOutboxForTurnMock.mockReset().mockResolvedValue([]);
+    getRecoverableHumanOutboxMock.mockReset().mockResolvedValue([]);
+    getMessageByClientIdMock.mockReset().mockImplementation(async (clientId: string) => outboundByClientId.get(clientId) ?? null);
+    markMessageSentMock.mockReset().mockImplementation(async (id: string, _attemptId: string, waId: string) => {
+      const message = persisted.find((candidate) => candidate.id === id);
+      if (message) {
+        message.send_status = 'sent';
+        message.wa_message_id = waId;
+      }
+      return true;
+    });
+    markMessageFailedMock.mockReset().mockResolvedValue(true);
+    runAgentMock
+      .mockReset()
+      .mockResolvedValueOnce('respuesta vieja ya iniciada')
+      .mockResolvedValueOnce('respuesta nueva');
+
+    await router.handle({} as WASocket, waInbound('wa-in-1', 'primera pregunta'));
+    const firstFlush = flushable.flush(conversation.id);
+    await vi.waitFor(() => expect(gateway.sendText).toHaveBeenCalledTimes(1));
+
+    // The outbox row is durable before transport starts. The new inbound is
+    // then stored while the first WhatsApp send remains in flight.
+    await router.handle({} as WASocket, waInbound('wa-in-2', 'segunda pregunta'));
+    releaseOldSend('wa-out-1');
+    await firstFlush;
+    expect(persisted.map((m) => m.id)).toEqual(['m1', 'o1', 'm2']);
+
+    await flushable.flush(conversation.id);
+
+    expect(runAgentMock).toHaveBeenCalledTimes(2);
+    const followUpHistory = runAgentMock.mock.calls[1]?.[1] as Message[];
+    // Cursor slicing keeps the newer inbound visible even though the previous
+    // outbound completed after it arrived.
+    expect(followUpHistory.map((m) => m.id)).toEqual(['m1', 'o1', 'm2']);
+    expect(gateway.sendText).toHaveBeenLastCalledWith(conversation.wa_jid, 'respuesta nueva', expect.any(String));
   });
 });

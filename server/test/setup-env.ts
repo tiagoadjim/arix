@@ -1,4 +1,4 @@
-// DATABASE_URL and AUTH_JWT_SECRET are the only vars config.ts still requires
+// DATABASE_URL, AUTH_JWT_SECRET and SETUP_TOKEN are the only vars config.ts requires
 // (everything else below is optional there since Phase 3 — see server/src/config.ts).
 // They're kept here anyway because they double as env SEEDS for the runtime
 // config service (server/src/config/runtime.ts): no real Postgres is reachable
@@ -15,4 +15,5 @@ process.env.WC_CURRENCY ??= 'ARS';
 process.env.PAYMENT_AMOUNT_TOLERANCE ??= '1';
 process.env.DATABASE_URL ??= 'postgres://test:test@localhost:5432/arix_test';
 process.env.AUTH_JWT_SECRET ??= 'test-secret-at-least-16-chars-long';
+process.env.SETUP_TOKEN ??= 'test-setup-token-at-least-32-characters-long';
 process.env.RECEIPTS_DIR ??= './data/receipts';

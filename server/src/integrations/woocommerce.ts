@@ -1,5 +1,6 @@
 import { woo as resolveWooConfig, settingsVersion } from '../config/runtime';
 import { logger } from '../logger';
+import { readTextLimited, safeFetch } from '../net/safe-fetch';
 
 /**
  * Thin typed client for the WooCommerce REST API v3.
@@ -213,9 +214,29 @@ export function sanitizeOrder(order: WcOrder): WcOrder {
   return out;
 }
 
+function abortableDelay(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.reject(signal.reason);
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal?.reason);
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
 async function request<T>(
   path: string,
-  opts: { method?: string; query?: Record<string, string | number | undefined>; body?: unknown } = {},
+  opts: {
+    method?: string;
+    query?: Record<string, string | number | undefined>;
+    body?: unknown;
+    signal?: AbortSignal;
+  } = {},
 ): Promise<{ data: T; headers: Headers }> {
   const { base, auth, configured } = await creds();
   if (!configured) throw new WooNotConfiguredError();
@@ -225,17 +246,45 @@ async function request<T>(
     if (v !== undefined && v !== '') url.searchParams.set(k, String(v));
   }
 
-  const res = await fetch(url, {
-    method: opts.method ?? 'GET',
-    headers: {
-      Authorization: auth,
-      'Content-Type': 'application/json',
-      Accept: 'application/json',
-    },
-    body: opts.body ? JSON.stringify(opts.body) : undefined,
-  });
+  const method = opts.method ?? 'GET';
+  const attempts = method === 'GET' ? 3 : 1;
+  let res: Response | null = null;
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      res = await safeFetch(
+        url,
+        {
+          method,
+          headers: {
+            Authorization: auth,
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+          },
+          body: opts.body ? JSON.stringify(opts.body) : undefined,
+          signal: opts.signal,
+        },
+        { timeoutMs: 20_000 },
+      );
+      if (attempt < attempts && (res.status === 429 || res.status >= 500)) {
+        await res.body?.cancel().catch(() => {});
+        const retryAfter = Number(res.headers.get('retry-after'));
+        const delay = Number.isFinite(retryAfter)
+          ? Math.min(5_000, Math.max(250, retryAfter * 1000))
+          : attempt * 500;
+        await abortableDelay(delay, opts.signal);
+        continue;
+      }
+      break;
+    } catch (err) {
+      lastError = err;
+      if (attempt >= attempts) throw err;
+      await abortableDelay(attempt * 500, opts.signal);
+    }
+  }
+  if (!res) throw lastError ?? new Error('WooCommerce request failed without a response');
 
-  const text = await res.text();
+  const text = await readTextLimited(res);
   let parsed: unknown;
   try {
     parsed = text ? JSON.parse(text) : null;
@@ -244,7 +293,7 @@ async function request<T>(
   }
 
   if (!res.ok) {
-    logger.warn({ path, status: res.status, body: parsed }, 'WooCommerce request failed');
+    logger.warn({ path, method, status: res.status }, 'WooCommerce request failed');
     throw new WooError(
       `WooCommerce ${opts.method ?? 'GET'} ${path} -> ${res.status}`,
       res.status,
@@ -254,9 +303,18 @@ async function request<T>(
   return { data: parsed as T, headers: res.headers };
 }
 
-/** Digits-only, keep the last `keep` digits to compare phones across formats. */
+/** Canonical phone representation used for authorization decisions. Formatting
+ * characters are ignored, but every digit (including country/area code) must
+ * match. Never use a suffix as an identity boundary: unrelated customers can
+ * legitimately share the same local tail. */
+export function normalizePhone(phone: string | null | undefined): string {
+  return (phone ?? '').replace(/\D/g, '');
+}
+
+/** Digits-only tail used only to obtain fuzzy WooCommerce search candidates.
+ * Candidate results must still be filtered with {@link normalizePhone}. */
 export function phoneSuffix(phone: string | null | undefined, keep = 8): string {
-  const digits = (phone ?? '').replace(/\D/g, '');
+  const digits = normalizePhone(phone);
   return digits.slice(-keep);
 }
 
@@ -267,7 +325,7 @@ export const woo = {
     stockStatus?: 'instock' | 'outofstock' | 'onbackorder';
     type?: string;
     perPage?: number;
-  }): Promise<WcProduct[]> {
+  }, signal?: AbortSignal): Promise<WcProduct[]> {
     const { data } = await request<WcProduct[]>('/products', {
       query: {
         search: params.search,
@@ -278,37 +336,39 @@ export const woo = {
         per_page: params.perPage ?? 20,
         orderby: 'popularity',
       },
+      signal,
     });
     return data.map(sanitizeProduct);
   },
 
-  async getProduct(id: number): Promise<WcProduct> {
-    const { data } = await request<WcProduct>(`/products/${id}`);
+  async getProduct(id: number, signal?: AbortSignal): Promise<WcProduct> {
+    const { data } = await request<WcProduct>(`/products/${id}`, { signal });
     return sanitizeProduct(data);
   },
 
-  async listCategories(): Promise<WcCategory[]> {
+  async listCategories(signal?: AbortSignal): Promise<WcCategory[]> {
     const { data } = await request<WcCategory[]>('/products/categories', {
-      query: { per_page: 100 },
+      query: { per_page: 100 }, signal,
     });
     return data;
   },
 
-  async getVariations(productId: number): Promise<WcVariation[]> {
+  async getVariations(productId: number, signal?: AbortSignal): Promise<WcVariation[]> {
     const { data } = await request<WcVariation[]>(`/products/${productId}/variations`, {
-      query: { per_page: 100 },
+      query: { per_page: 100 }, signal,
     });
     return data;
   },
 
-  async getOrder(id: number): Promise<WcOrder> {
-    const { data } = await request<WcOrder>(`/orders/${id}`);
+  async getOrder(id: number, signal?: AbortSignal): Promise<WcOrder> {
+    const { data } = await request<WcOrder>(`/orders/${id}`, { signal });
     return sanitizeOrder(data);
   },
 
-  async searchOrders(search: string, perPage = 100): Promise<WcOrder[]> {
+  async searchOrders(search: string, perPage = 100, signal?: AbortSignal): Promise<WcOrder[]> {
     const { data } = await request<WcOrder[]>('/orders', {
       query: { search, per_page: perPage, orderby: 'date', order: 'desc' },
+      signal,
     });
     return data.map(sanitizeOrder);
   },
@@ -317,7 +377,7 @@ export const woo = {
    * Resolve a human order number to a real order. Handles the common case where
    * number === id, and the sequential-order-number-plugin case (number !== id).
    */
-  async resolveOrderByNumber(orderNumber: string): Promise<WcOrder | null> {
+  async resolveOrderByNumber(orderNumber: string, signal?: AbortSignal): Promise<WcOrder | null> {
     const clean = orderNumber.replace(/[^0-9A-Za-z-]/g, '');
     // Fast path: GET /orders/<id> returns the order whose INTERNAL id === clean.
     // That is only the right order when its customer-facing `number` also equals
@@ -325,7 +385,7 @@ export const woo = {
     // this would be a stranger's order — so do NOT return it; fall through to search.
     if (/^\d+$/.test(clean)) {
       try {
-        const order = await woo.getOrder(Number(clean));
+        const order = await woo.getOrder(Number(clean), signal);
         if (order && order.number === clean) return order;
       } catch (err) {
         if (!(err instanceof WooError && err.status === 404)) throw err;
@@ -336,30 +396,34 @@ export const woo = {
     // id) — matching internal id here could return a stranger's order whose id
     // happens to equal the quoted number. Search is fuzzy, so a non-match must
     // resolve to null (caller reports "orden no encontrada").
-    const results = await woo.searchOrders(clean);
+    const results = await woo.searchOrders(clean, 100, signal);
     return results.find((o) => o.number === clean) ?? null;
   },
 
-  /** Find a customer's orders by phone (fuzzy search + defensive suffix match). */
-  async findOrdersByPhone(phone: string): Promise<WcOrder[]> {
+  /** Find a customer's orders by phone. Woo search is fuzzy, but the returned
+   * rows cross an authorization boundary and therefore require a full exact
+   * digits-only match. */
+  async findOrdersByPhone(phone: string, signal?: AbortSignal): Promise<WcOrder[]> {
+    const normalized = normalizePhone(phone);
     const suffix = phoneSuffix(phone);
-    if (!suffix) return [];
-    const results = await woo.searchOrders(suffix);
-    return results.filter((o) => phoneSuffix(o.billing?.phone) === suffix);
+    if (!normalized || !suffix) return [];
+    const results = await woo.searchOrders(suffix, 100, signal);
+    return results.filter((o) => normalizePhone(o.billing?.phone) === normalized);
   },
 
   /** Find a customer's orders by email (fuzzy search + defensive exact match). */
-  async findOrdersByEmail(email: string): Promise<WcOrder[]> {
+  async findOrdersByEmail(email: string, signal?: AbortSignal): Promise<WcOrder[]> {
     const e = email.trim().toLowerCase();
     if (!e) return [];
-    const results = await woo.searchOrders(e);
+    const results = await woo.searchOrders(e, 100, signal);
     return results.filter((o) => (o.billing?.email ?? '').trim().toLowerCase() === e);
   },
 
-  async updateOrderStatus(id: number, status: string): Promise<WcOrder> {
+  async updateOrderStatus(id: number, status: string, signal?: AbortSignal): Promise<WcOrder> {
     const { data } = await request<WcOrder>(`/orders/${id}`, {
       method: 'PUT',
       body: { status },
+      signal,
     });
     return sanitizeOrder(data);
   },

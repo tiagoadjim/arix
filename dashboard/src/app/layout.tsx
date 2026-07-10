@@ -3,6 +3,7 @@ import { GeistSans } from 'geist/font/sans';
 import { ThemeProvider } from 'next-themes';
 import { Toaster } from '@/components/ui/sonner';
 import { I18nProvider } from '@/lib/i18n/provider';
+import { dictionaries } from '@/lib/i18n';
 import { getLocale } from '@/lib/i18n/server';
 import './globals.css';
 
@@ -19,6 +20,9 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       <body>
         <ThemeProvider attribute="class" defaultTheme="dark" disableTransitionOnChange>
           <I18nProvider locale={locale}>
+            <a href="#main-content" className="skip-link">
+              {dictionaries[locale].common.skipToContent}
+            </a>
             {children}
             <Toaster richColors position="top-right" />
           </I18nProvider>

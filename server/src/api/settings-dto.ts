@@ -1,10 +1,12 @@
 import {
   SETTINGS_SCHEMA,
   SETTINGS_BY_KEY,
+  isNumberWithinBounds,
   type SettingDefinition,
   type SettingType,
 } from '../config/settings-schema';
 import type { ResolvedEntry, ResolvedMeta, SettingSource } from '../config/runtime';
+import { isValidSchedule, isValidTimezone } from '../agent/hours';
 import {
   mergeMcpServers,
   normalizeMcpServers,
@@ -42,6 +44,9 @@ export interface SettingDto {
    * the env value on the very next resolution. */
   readOnly: boolean;
   secret: boolean;
+  /** Inclusive bounds for numeric settings; omitted for other types. */
+  min?: number;
+  max?: number;
 }
 
 /** Strip secret material from values that leave the server. */
@@ -72,6 +77,7 @@ export function toSettingDto(entry: SettingDefinition, resolved: ResolvedEntry):
     source: resolved.source,
     readOnly: resolved.source === 'env',
     secret,
+    ...(entry.type === 'number' ? { min: entry.min, max: entry.max } : {}),
   };
 }
 
@@ -168,7 +174,7 @@ export function coerceForStorage(
       return typeof value === 'boolean' ? String(value) : /^(1|true|yes|on)$/i.test(String(value ?? '')) ? 'true' : 'false';
     case 'number': {
       const n = typeof value === 'number' ? value : Number(value);
-      return Number.isFinite(n) ? String(n) : String(entry.default);
+      return isNumberWithinBounds(entry, n) ? String(n) : String(entry.default);
     }
     case 'json':
       return typeof value === 'string' ? value : JSON.stringify(value);
@@ -207,4 +213,58 @@ export function validateSettingsUpdates(
   }
   if (offenders.length > 0) return { ok: false, offenders };
   return { ok: true, updates: resolved };
+}
+
+/** Strict value validation for the write boundary. Runtime parsing remains
+ * defensive, but the API should reject malformed values rather than silently
+ * replacing them with defaults. */
+export function invalidSettingsValues(
+  updates: Array<{ entry: SettingDefinition; raw: unknown }>,
+): string[] {
+  const invalid = new Set<string>();
+  const seen = new Set<string>();
+  for (const { entry, raw } of updates) {
+    if (seen.has(entry.key)) invalid.add(entry.key);
+    seen.add(entry.key);
+    if (isNoOpSecretUpdate(entry, raw)) continue;
+    switch (entry.type) {
+      case 'boolean':
+        if (typeof raw !== 'boolean' && !/^(0|1|true|false|yes|no|on|off)$/i.test(String(raw ?? ''))) {
+          invalid.add(entry.key);
+        }
+        break;
+      case 'number': {
+        const n = typeof raw === 'number' ? raw : Number(raw);
+        if (!isNumberWithinBounds(entry, n)) invalid.add(entry.key);
+        break;
+      }
+      case 'json':
+        try {
+          const serialized = typeof raw === 'string' ? raw : JSON.stringify(raw);
+          if (!serialized || Buffer.byteLength(serialized, 'utf8') > 100_000) invalid.add(entry.key);
+          else JSON.parse(serialized);
+        } catch {
+          invalid.add(entry.key);
+        }
+        break;
+      case 'enum':
+        if (!entry.enumValues?.includes(String(raw))) invalid.add(entry.key);
+        break;
+      case 'string':
+      default: {
+        const max = entry.secret ? 8_192 : 20_000;
+        if (typeof raw !== 'string' || Buffer.byteLength(raw, 'utf8') > max) invalid.add(entry.key);
+      }
+    }
+    if (entry.key === 'business.timezone' && !isValidTimezone(raw)) invalid.add(entry.key);
+    if (entry.key === 'business.hours') {
+      try {
+        const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+        if (!isValidSchedule(parsed)) invalid.add(entry.key);
+      } catch {
+        invalid.add(entry.key);
+      }
+    }
+  }
+  return [...invalid];
 }

@@ -11,12 +11,52 @@ import {
   woo,
   llm as resolveLlmSettings,
 } from '../config/runtime';
+import { config } from '../config';
 import { logger } from '../logger';
 import type { Message, ToolContext } from '../types';
 
 type ChatMessage = OpenAI.Chat.Completions.ChatCompletionMessageParam;
 
 const MAX_STEPS = 6;
+/** Hard wall-clock budget for the whole turn: config, LLM retries/steps and tools. */
+export const AGENT_TURN_BUDGET_MS = config.AGENT_TURN_TIMEOUT_MS;
+
+export interface RunAgentOptions {
+  /** Override used by deterministic tests; production uses AGENT_TURN_BUDGET_MS. */
+  turnBudgetMs?: number;
+  /** External lifecycle cancellation (takeover/shutdown). */
+  signal?: AbortSignal;
+}
+
+class AgentTurnBudgetError extends Error {
+  constructor(readonly budgetMs: number) {
+    super(`agent turn exceeded its ${budgetMs}ms budget`);
+    this.name = 'AgentTurnBudgetError';
+  }
+}
+
+function abortReason(signal: AbortSignal): Error {
+  return signal.reason instanceof Error ? signal.reason : new AgentTurnBudgetError(AGENT_TURN_BUDGET_MS);
+}
+
+/** Race any work against the shared turn signal and remove the listener when done. */
+function withinTurnBudget<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(abortReason(signal));
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(abortReason(signal));
+    signal.addEventListener('abort', onAbort, { once: true });
+    work.then(
+      (value) => {
+        signal.removeEventListener('abort', onAbort);
+        resolve(value);
+      },
+      (err: unknown) => {
+        signal.removeEventListener('abort', onAbort);
+        reject(err);
+      },
+    );
+  });
+}
 
 /** Whether the configured provider/model can see images, and what to do
  * instead when it can't (mirrors llm.vision_fallback). */
@@ -97,6 +137,17 @@ function finalText(
   return handle.postprocess(typeof content === 'string' ? content : '');
 }
 
+/** Log only the argument shape, never customer/order/payment values. */
+export function toolArgumentKeys(rawArgs: string): string[] {
+  try {
+    const parsed: unknown = rawArgs ? JSON.parse(rawArgs) : {};
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return [];
+    return Object.keys(parsed).sort().slice(0, 20);
+  } catch {
+    return [];
+  }
+}
+
 /**
  * Run the agent for one customer turn. `history` is the recent conversation
  * (chronological, last item = the message that just arrived). Returns the text
@@ -105,7 +156,46 @@ function finalText(
  * Callers MUST check `(await llm()).configured` first (see
  * handlers/messages.ts) — this function assumes an LLM client is usable.
  */
-export async function runAgent(ctx: ToolContext, history: Message[]): Promise<string> {
+export async function runAgent(
+  ctx: ToolContext,
+  history: Message[],
+  options: RunAgentOptions = {},
+): Promise<string> {
+  const budgetMs = Math.max(1, options.turnBudgetMs ?? AGENT_TURN_BUDGET_MS);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(new AgentTurnBudgetError(budgetMs)), budgetMs);
+  timeout.unref();
+  const signal = options.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal;
+
+  // Default to Spanish only if even runtime configuration cannot resolve
+  // before the deadline. runAgentTurn updates this as soon as it knows the
+  // configured language.
+  const budgetState = { fallback: getGuardrails('es').fallback };
+  try {
+    return await withinTurnBudget(
+      runAgentTurn(ctx, history, signal, budgetState),
+      signal,
+    );
+  } catch (err) {
+    if (signal.aborted || err instanceof AgentTurnBudgetError) {
+      logger.warn(
+        { conversationId: ctx.conversationId, budgetMs },
+        'agent turn exceeded total time budget — returning the safe fallback',
+      );
+      return budgetState.fallback;
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function runAgentTurn(
+  ctx: ToolContext,
+  history: Message[],
+  signal: AbortSignal,
+  budgetState: { fallback: string },
+): Promise<string> {
   // Resolve everything the turn needs from the runtime config service once,
   // up front — memoized internally, so this is cheap after the first turn.
   const [profile, schedule, blocks, rules, wooCfg, handle, llmSettings] = await Promise.all([
@@ -118,6 +208,7 @@ export async function runAgent(ctx: ToolContext, history: Message[]): Promise<st
     resolveLlmSettings(),
   ]);
   const guardrails = getGuardrails(profile.language);
+  budgetState.fallback = guardrails.fallback;
   const vision: VisionOptions = {
     supported: handle.provider.supportsVision(handle.model),
     fallback: llmSettings.visionFallback,
@@ -191,7 +282,7 @@ export async function runAgent(ctx: ToolContext, history: Message[]): Promise<st
 
     let resp: OpenAI.Chat.Completions.ChatCompletion;
     try {
-      resp = await handle.chatComplete(body);
+      resp = await handle.chatComplete(body, { signal, conversationId: ctx.conversationId });
     } catch (err) {
       // chatComplete() already retried internally (see llm/client.ts) — by
       // the time an error reaches here, further retries won't help. Fail
@@ -279,13 +370,19 @@ export async function runAgent(ctx: ToolContext, history: Message[]): Promise<st
         });
         continue;
       }
-      // Arguments may contain customer PII or MCP credentials. Never log
-      // them; tool name + server-side duration logs are sufficient.
-      logger.info({ tool: tc.function.name }, 'agent tool call');
+      // Log only the argument shape. Values can contain customer PII, order
+      // data, payment details, or credentials (including for MCP tools).
+      logger.info(
+        { tool: tc.function.name, argKeys: toolArgumentKeys(tc.function.arguments) },
+        'agent tool call',
+      );
       if (tc.function.name === 'search_catalog' || tc.function.name === 'view_product') {
         catalogQueried = true; // product facts are now grounded in real data
       }
-      const result = await runTool(tc.function.name, tc.function.arguments, ctx);
+      const result = await withinTurnBudget(
+        runTool(tc.function.name, tc.function.arguments, { ...ctx, signal }),
+        signal,
+      );
       messages.push({ role: 'tool', tool_call_id: tc.id, content: result });
     }
   }

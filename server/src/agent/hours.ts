@@ -67,6 +67,33 @@ export const DEFAULT_DELIVERY_SCHEDULE: Schedule = [
   [H(11), H(24 + 3)], // sábado  11:00 → 03:00 (del domingo)
 ];
 
+export function isValidTimezone(value: unknown): value is string {
+  if (typeof value !== 'string' || !value.trim()) return false;
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: value }).format(new Date(0));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function isValidSchedule(value: unknown): value is Schedule {
+  if (!Array.isArray(value) || value.length !== 7) return false;
+  return value.every((window) => {
+    if (window === null) return true;
+    if (!Array.isArray(window) || window.length !== 2) return false;
+    const [open, close] = window;
+    return (
+      Number.isInteger(open) &&
+      Number.isInteger(close) &&
+      open >= 0 &&
+      open < 1440 &&
+      close > open &&
+      close <= 2880
+    );
+  });
+}
+
 export interface ArNow {
   year: number;
   /** 1-12 */

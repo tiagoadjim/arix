@@ -1,10 +1,18 @@
-import { vi, describe, it, expect, beforeEach } from 'vitest';
+import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 
 // Mock the LLM client and tool dispatch so we can drive the harness loop.
 // `providerCaps` lets individual tests flip provider capabilities
 // (supportsForcedToolChoice / supportsVision) to exercise the gating logic in
 // agent.ts without needing a second mock module.
-const { create, runTool, providerCaps, enabledToolDefinitions } = vi.hoisted(() => ({
+const {
+  create,
+  runTool,
+  providerCaps,
+  enabledToolDefinitions,
+  loggerInfo,
+  loggerWarn,
+  loggerError,
+} = vi.hoisted(() => ({
   create: vi.fn(),
   runTool: vi.fn(),
   providerCaps: { supportsForcedToolChoice: true, supportsVision: true },
@@ -16,6 +24,13 @@ const { create, runTool, providerCaps, enabledToolDefinitions } = vi.hoisted(() 
       }),
     ),
   },
+  loggerInfo: vi.fn(),
+  loggerWarn: vi.fn(),
+  loggerError: vi.fn(),
+}));
+
+vi.mock('../src/logger', () => ({
+  logger: { info: loggerInfo, warn: loggerWarn, error: loggerError, fatal: vi.fn() },
 }));
 
 vi.mock('../src/agent/llm/client', () => {
@@ -62,7 +77,7 @@ vi.mock('../src/agent/tools', () => ({
   runTool,
 }));
 
-import { runAgent } from '../src/agent/agent';
+import { runAgent, toolArgumentKeys } from '../src/agent/agent';
 import { LlmRequestError } from '../src/agent/llm/client';
 import type { Message, ToolContext } from '../src/types';
 
@@ -81,6 +96,9 @@ const history = [
 beforeEach(() => {
   create.mockReset();
   runTool.mockReset();
+  loggerInfo.mockReset();
+  loggerWarn.mockReset();
+  loggerError.mockReset();
   enabledToolDefinitions.value = [
     'search_catalog',
     'view_product',
@@ -93,6 +111,10 @@ beforeEach(() => {
   }));
   providerCaps.supportsForcedToolChoice = true;
   providerCaps.supportsVision = true;
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe('runAgent harness', () => {
@@ -129,8 +151,17 @@ describe('runAgent harness', () => {
     const reply = await runAgent(ctx, history);
 
     expect(reply).toBe('¡Listo Juan! Tu pago quedó confirmado 🙌');
-    expect(runTool).toHaveBeenCalledWith('find_order', '{"order_number":"1042"}', ctx);
+    expect(runTool).toHaveBeenCalledWith(
+      'find_order',
+      '{"order_number":"1042"}',
+      expect.objectContaining({ ...ctx, signal: expect.any(AbortSignal) }),
+    );
     expect(create).toHaveBeenCalledTimes(2);
+    expect(loggerInfo).toHaveBeenCalledWith(
+      { tool: 'find_order', argKeys: ['order_number'] },
+      'agent tool call',
+    );
+    expect(JSON.stringify(loggerInfo.mock.calls)).not.toContain('1042');
   });
 
   it('returns a direct answer when no tool is called', async () => {
@@ -141,6 +172,58 @@ describe('runAgent harness', () => {
     const reply = await runAgent(ctx, history);
     expect(reply).toBe('Hola! ¿En qué te ayudo?');
     expect(runTool).not.toHaveBeenCalled();
+  });
+
+  it('enforces one wall-clock budget across the whole turn, including a stuck tool', async () => {
+    vi.useFakeTimers();
+    create.mockResolvedValueOnce({
+      choices: [
+        {
+          finish_reason: 'tool_calls',
+          message: {
+            role: 'assistant',
+            content: '',
+            tool_calls: [
+              { id: 'call_1', type: 'function', function: { name: 'find_order', arguments: '{}' } },
+            ],
+          },
+        },
+      ],
+    });
+    runTool.mockReturnValueOnce(new Promise<string>(() => {}));
+
+    const pending = runAgent(ctx, history, { turnBudgetMs: 1_000 });
+    // Runtime config + the first mocked LLM response settle in microtasks.
+    for (let i = 0; i < 20 && runTool.mock.calls.length === 0; i += 1) {
+      await Promise.resolve();
+    }
+    expect(runTool).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(999);
+    let settled = false;
+    void pending.then(() => {
+      settled = true;
+    });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(pending).resolves.toMatch(/problemita/);
+    expect(create).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('toolArgumentKeys', () => {
+  it('returns only sorted top-level keys and never argument values', () => {
+    const raw = '{"email":"cliente@example.com","order_number":"1042"}';
+    expect(toolArgumentKeys(raw)).toEqual(['email', 'order_number']);
+    expect(JSON.stringify(toolArgumentKeys(raw))).not.toContain('cliente@example.com');
+    expect(JSON.stringify(toolArgumentKeys(raw))).not.toContain('1042');
+  });
+
+  it('returns an empty shape for malformed or non-object arguments', () => {
+    expect(toolArgumentKeys('{bad json')).toEqual([]);
+    expect(toolArgumentKeys('["secret"]')).toEqual([]);
   });
 });
 
@@ -219,7 +302,11 @@ describe('runAgent input/output guards', () => {
       type: 'function',
       function: { name: 'search_catalog' },
     });
-    expect(runTool).toHaveBeenCalledWith('search_catalog', '{}', ctx);
+    expect(runTool).toHaveBeenCalledWith(
+      'search_catalog',
+      '{}',
+      expect.objectContaining({ ...ctx, signal: expect.any(AbortSignal) }),
+    );
     expect(reply).toContain('Elf Bar');
     expect(create).toHaveBeenCalledTimes(3);
   });
@@ -275,7 +362,11 @@ describe('runAgent input/output guards', () => {
     const reply = await runAgent(ctx, catalogHistory);
 
     expect(create.mock.calls[1][0].tool_choice).toBeUndefined();
-    expect(runTool).toHaveBeenCalledWith('search_catalog', '{}', ctx);
+    expect(runTool).toHaveBeenCalledWith(
+      'search_catalog',
+      '{}',
+      expect.objectContaining({ ...ctx, signal: expect.any(AbortSignal) }),
+    );
     expect(reply).toContain('Elf Bar');
   });
 

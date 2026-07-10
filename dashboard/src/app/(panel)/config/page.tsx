@@ -1,7 +1,9 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { ArrowLeftIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { api, apiErrorMessage, type SettingDto } from '@/lib/api';
 import { setLocaleCookie, type Locale } from '@/lib/i18n';
@@ -69,7 +71,7 @@ export default function SettingsPage() {
 
   if (!grouped) {
     return (
-      <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 p-6">
+      <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 p-4 sm:p-6">
         <Skeleton className="h-8 w-48" />
         <Skeleton className="h-72 w-full" />
         {loadError && (
@@ -82,22 +84,31 @@ export default function SettingsPage() {
   }
 
   return (
-    <div className="mx-auto flex h-full w-full max-w-3xl flex-col gap-4 overflow-y-auto p-6">
-      <div>
-        <h1 className="text-xl font-semibold">{t.settings.pageTitle}</h1>
-        <p className="text-sm text-muted-foreground">{t.settings.pageDescription}</p>
+    <div className="mx-auto flex h-full w-full max-w-3xl flex-col gap-4 overflow-y-auto p-4 sm:p-6">
+      <div className="flex items-start gap-2">
+        <Button variant="ghost" size="icon-sm" asChild className="mt-0.5 shrink-0 md:hidden">
+          <Link href="/" aria-label={t.sidebar.backToInbox} title={t.sidebar.backToInbox}>
+            <ArrowLeftIcon className="size-4" />
+          </Link>
+        </Button>
+        <div>
+          <h1 className="text-xl font-semibold">{t.settings.pageTitle}</h1>
+          <p className="text-sm text-muted-foreground">{t.settings.pageDescription}</p>
+        </div>
       </div>
 
       <Tabs defaultValue="provider">
-        <TabsList className="flex h-auto flex-wrap gap-1">
-          <TabsTrigger value="provider">{t.settings.tabProvider}</TabsTrigger>
-          <TabsTrigger value="store">{t.settings.tabStore}</TabsTrigger>
-          <TabsTrigger value="skills">{t.settings.tabSkills}</TabsTrigger>
-          <TabsTrigger value="mcp">{t.settings.tabMcp}</TabsTrigger>
-          <TabsTrigger value="business">{t.settings.tabBusiness}</TabsTrigger>
-          <TabsTrigger value="whatsapp">{t.settings.tabWhatsapp}</TabsTrigger>
-          <TabsTrigger value="staff">{t.settings.tabStaff}</TabsTrigger>
-        </TabsList>
+        <div className="max-w-full overflow-x-auto pb-1">
+          <TabsList className="min-w-max">
+            <TabsTrigger value="provider">{t.settings.tabProvider}</TabsTrigger>
+            <TabsTrigger value="store">{t.settings.tabStore}</TabsTrigger>
+            <TabsTrigger value="skills">{t.settings.tabSkills}</TabsTrigger>
+            <TabsTrigger value="mcp">{t.settings.tabMcp}</TabsTrigger>
+            <TabsTrigger value="business">{t.settings.tabBusiness}</TabsTrigger>
+            <TabsTrigger value="whatsapp">{t.settings.tabWhatsapp}</TabsTrigger>
+            <TabsTrigger value="staff">{t.settings.tabStaff}</TabsTrigger>
+          </TabsList>
+        </div>
 
         <TabsContent value="provider" className="pt-4">
           <ProviderTab dtos={grouped.llm} onSaved={reload} />
@@ -216,7 +227,7 @@ function StoreTab({
 
   return (
     <div className="flex flex-col gap-4">
-      <StoreFields values={values} onChange={setValues} wc={wc} disabled={saving} />
+      <StoreFields values={values} onChange={setValues} wc={wc} payment={payment} disabled={saving} />
       <Button onClick={() => void handleSave()} disabled={saving || !dirty} className="w-fit">
         {saving ? t.common.saving : t.settings.saveButton}
       </Button>
@@ -367,6 +378,7 @@ function BusinessTab({
         onChange={setValues}
         uiLanguage={uiLanguage}
         onUiLanguageChange={setUiLanguage}
+        dtos={{ business, agent, info, dispatch, compliance }}
         disabled={saving}
       />
       <Button onClick={() => void handleSave()} disabled={saving || !dirty} className="w-fit">

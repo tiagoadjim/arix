@@ -69,8 +69,14 @@ describe('migrate', () => {
     await migrate();
 
     const texts = client.calls.map((c) => c.text.trim().toLowerCase());
-    expect(texts[0]).toMatch(/^create table if not exists schema_migrations/);
-    expect(texts[1]).toBe('select version from schema_migrations');
+    const setTimeoutSql = "select set_config('statement_timeout', $1, false)";
+    const lock = "select pg_advisory_lock(hashtext('arix:schema-migrations'))";
+    const unlock = "select pg_advisory_unlock(hashtext('arix:schema-migrations'))";
+    expect(texts[0]).toBe(setTimeoutSql);
+    expect(client.calls[0]?.params).toEqual(['300000']);
+    expect(texts[1]).toBe(lock);
+    expect(texts[2]).toMatch(/^create table if not exists schema_migrations/);
+    expect(texts[3]).toBe('select version from schema_migrations');
 
     const firstBegin = texts.indexOf('begin');
     expect(firstBegin).toBeGreaterThan(-1);
@@ -83,6 +89,10 @@ describe('migrate', () => {
     expect(texts[secondBegin + 1]).toBe('alter table foo add column bar text;');
     expect(texts[secondBegin + 2]).toMatch(/^insert into schema_migrations/);
     expect(texts[secondBegin + 3]).toBe('commit');
+    expect(texts.at(-2)).toBe(unlock);
+    expect(texts.at(-1)).toBe(setTimeoutSql);
+    expect(client.calls.at(-1)?.params).toEqual(['30000']);
+    expect(texts.indexOf(unlock)).toBeGreaterThan(texts.indexOf('commit', secondBegin));
 
     expect(applied).toEqual(['0001_init', '0002_sender_agent']);
     expect(client.release).toHaveBeenCalled();
@@ -126,6 +136,9 @@ describe('migrate', () => {
     const texts = client.calls.map((c) => c.text.trim().toLowerCase());
     expect(texts).toContain('rollback');
     expect(texts.some((t) => t.startsWith('insert into schema_migrations'))).toBe(false);
+    expect(texts.at(-2)).toBe("select pg_advisory_unlock(hashtext('arix:schema-migrations'))");
+    expect(texts.at(-1)).toBe("select set_config('statement_timeout', $1, false)");
+    expect(texts.indexOf('rollback')).toBeLessThan(texts.length - 1);
     expect(applied).toEqual([]);
     expect(client.release).toHaveBeenCalled();
   });

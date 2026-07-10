@@ -5,10 +5,16 @@ import {
   normalizeSettingsUpdates,
   coerceForStorage,
   validateSettingsUpdates,
+  invalidSettingsValues,
   isNoOpSecretUpdate,
   type SettingDto,
 } from '../src/api/settings-dto';
-import { SETTINGS_BY_KEY, SETTINGS_SCHEMA } from '../src/config/settings-schema';
+import {
+  MAX_LLM_COST_PER_MILLION_USD,
+  MAX_PAYMENT_TOLERANCE,
+  SETTINGS_BY_KEY,
+  SETTINGS_SCHEMA,
+} from '../src/config/settings-schema';
 import type { ResolvedMeta } from '../src/config/runtime';
 
 const entry = (key: string) => {
@@ -43,6 +49,14 @@ describe('toSettingDto', () => {
     const dto = toSettingDto(entry('business.name'), { value: 'Env Store', source: 'env' });
     expect(dto.set).toBe(true);
     expect(dto.readOnly).toBe(true);
+  });
+
+  it('exposes numeric bounds without adding them to non-numeric DTOs', () => {
+    expect(toSettingDto(entry('payment.tolerance'), { value: 1, source: 'default' })).toMatchObject({
+      min: 0,
+      max: MAX_PAYMENT_TOLERANCE,
+    });
+    expect(toSettingDto(entry('business.name'), { value: 'Store', source: 'default' })).not.toHaveProperty('max');
   });
 
   it('NEVER returns the real value for a secret key — value is always null', () => {
@@ -187,6 +201,9 @@ describe('coerceForStorage', () => {
   it('stores a finite number as a numeric string, falling back to the default when not finite', () => {
     expect(coerceForStorage(entry('payment.tolerance'), 2.5)).toBe('2.5');
     expect(coerceForStorage(entry('payment.tolerance'), 'abc')).toBe(String(entry('payment.tolerance').default));
+    expect(coerceForStorage(entry('payment.tolerance'), MAX_PAYMENT_TOLERANCE + 1)).toBe(
+      String(entry('payment.tolerance').default),
+    );
   });
 
   it('stores json by stringifying non-string values and passing strings through', () => {
@@ -261,5 +278,27 @@ describe('validateSettingsUpdates', () => {
     );
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.offenders).toEqual(['unknown.key', 'wc.url']);
+  });
+});
+
+describe('invalidSettingsValues numeric bounds', () => {
+  it('accepts inclusive minimum and maximum boundary values', () => {
+    expect(
+      invalidSettingsValues([
+        { entry: entry('llm.input_cost_per_million'), raw: 0 },
+        { entry: entry('llm.output_cost_per_million'), raw: MAX_LLM_COST_PER_MILLION_USD },
+        { entry: entry('payment.tolerance'), raw: MAX_PAYMENT_TOLERANCE },
+      ]),
+    ).toEqual([]);
+  });
+
+  it('rejects finite values below min or above max', () => {
+    expect(
+      invalidSettingsValues([
+        { entry: entry('llm.input_cost_per_million'), raw: -0.01 },
+        { entry: entry('llm.output_cost_per_million'), raw: MAX_LLM_COST_PER_MILLION_USD + 0.01 },
+        { entry: entry('payment.tolerance'), raw: MAX_PAYMENT_TOLERANCE + 1 },
+      ]),
+    ).toEqual(['llm.input_cost_per_million', 'llm.output_cost_per_million', 'payment.tolerance']);
   });
 });

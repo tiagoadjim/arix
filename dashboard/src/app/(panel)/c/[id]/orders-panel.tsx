@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { toast } from 'sonner';
 import { RefreshCwIcon, TruckIcon } from 'lucide-react';
 import { api, apiErrorMessage } from '@/lib/api';
@@ -8,6 +8,7 @@ import type { StaffOrder } from '@/lib/types';
 import { useT } from '@/lib/i18n/provider';
 import { formatDate } from '@/lib/format';
 import { cn } from '@/lib/utils';
+import { createClientId } from '@/lib/id';
 import { Card, CardAction, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -89,17 +90,17 @@ export function OrdersPanel({ conversationId, orders, state, onReload }: OrdersP
           </Button>
         </CardAction>
       </CardHeader>
-      <CardContent className="flex flex-col gap-3">
-        {state === 'error' && <p className="text-sm text-muted-foreground">{t.conversation.ordersError}</p>}
+      <CardContent className="flex flex-col gap-3" aria-busy={state === 'loading'} aria-live="polite">
+        {state === 'error' && <p className="text-sm text-muted-foreground" role="alert">{t.conversation.ordersError}</p>}
         {state !== 'error' && orders.length === 0 && (
           <p className="text-sm text-muted-foreground">
             {state === 'loading' ? t.conversation.ordersLoading : t.conversation.ordersEmpty}
           </p>
         )}
         {orders.map((o) => (
-          <div key={o.number} className="rounded-md border border-border bg-muted/40 p-3 text-sm">
+          <article key={o.id} className="rounded-md border border-border bg-muted/40 p-3 text-sm" aria-labelledby={`order-${o.id}-title`}>
             <div className="flex items-center justify-between gap-2 font-medium">
-              <span>#{o.number}</span>
+              <span id={`order-${o.id}-title`}>#{o.number}</span>
               <Badge variant={SUCCESS_STATUSES.has(o.status) ? 'success' : 'outline'}>{statusLabel(o.status, o.status)}</Badge>
             </div>
             <p className="mt-1 text-xs text-muted-foreground">
@@ -119,13 +120,13 @@ export function OrdersPanel({ conversationId, orders, state, onReload }: OrdersP
               ))}
             </ul>
 
-            <div className="mt-3 flex gap-2">
+            <div className="mt-3 flex flex-col gap-2 sm:flex-row xl:flex-col 2xl:flex-row">
               <Select
                 value={statusSel[o.id] ?? o.status}
                 onValueChange={(v) => setStatusSel((s) => ({ ...s, [o.id]: v }))}
                 disabled={busy[o.id]}
               >
-                <SelectTrigger size="sm" className="flex-1">
+                <SelectTrigger size="sm" className="min-w-0 flex-1" aria-label={`${t.conversation.changeStatusButton} #${o.number}`}>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -150,7 +151,7 @@ export function OrdersPanel({ conversationId, orders, state, onReload }: OrdersP
               <TruckIcon className="size-3.5" />
               {t.conversation.dispatchButton}
             </Button>
-          </div>
+          </article>
         ))}
       </CardContent>
 
@@ -176,11 +177,13 @@ function DispatchDialog({ order, conversationId, onOpenChange, onSent }: Dispatc
   const [trackingUrl, setTrackingUrl] = useState('');
   const [deliveryCode, setDeliveryCode] = useState('');
   const [sending, setSending] = useState(false);
+  const attemptRef = useRef<{ fingerprint: string; clientId: string } | null>(null);
 
   // Reset the form fields whenever a different order's dialog opens.
   useEffect(() => {
     setTrackingUrl('');
     setDeliveryCode('');
+    attemptRef.current = null;
   }, [order?.id]);
 
   async function submit(e: FormEvent) {
@@ -191,12 +194,17 @@ function DispatchDialog({ order, conversationId, onOpenChange, onSent }: Dispatc
       return;
     }
     setSending(true);
+    const fingerprint = `${order.id}\n${trackingUrl.trim()}\n${deliveryCode.trim()}`;
+    const previous = attemptRef.current;
+    const clientId = previous?.fingerprint === fingerprint ? previous.clientId : createClientId();
+    attemptRef.current = { fingerprint, clientId };
     try {
       const r = await api.sendDelivery(conversationId, order.id, {
         trackingUrl: trackingUrl.trim(),
         deliveryCode: deliveryCode.trim(),
-        orderNumber: order.number,
+        clientId,
       });
+      attemptRef.current = null;
       toast.success(r.statusUpdated ? t.conversation.dispatchSent : t.conversation.dispatchSentNoStatus);
       onOpenChange(false);
       await onSent();

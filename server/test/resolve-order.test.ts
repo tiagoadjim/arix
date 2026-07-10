@@ -1,18 +1,36 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+
+const { safeFetchMock, resolveWooConfig } = vi.hoisted(() => ({
+  safeFetchMock: vi.fn(),
+  lookup: vi.fn(),
+  resolveWooConfig: vi.fn(),
+}));
+
+// SSRF/DNS-pinning behavior has its own safe-fetch contract suite. These Woo
+// unit tests replace that boundary so they never open a real pinned socket.
+vi.mock('../src/net/safe-fetch', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/net/safe-fetch')>();
+  return { ...actual, safeFetch: safeFetchMock };
+});
+vi.mock('../src/config/runtime', () => ({
+  woo: resolveWooConfig,
+  settingsVersion: () => 0,
+}));
+
 import { woo } from '../src/integrations/woocommerce';
 
 type OrderRow = { id: number; number: string };
 
-/** Stub global fetch to serve GET /orders/<id> and GET /orders?search=... */
+/** Stub the validated remote transport to serve orders deterministically. */
 function stubWoo(orders: OrderRow[]) {
-  vi.stubGlobal('fetch', async (input: unknown) => {
-    const url = String(input);
-    const ok = (body: unknown, status = 200) => ({
-      ok: status < 400,
-      status,
-      text: async () => JSON.stringify(body),
-      headers: new Headers(),
-    });
+  safeFetchMock.mockImplementation(async (input: string | URL | Request, init?: RequestInit) => {
+    const request = input instanceof Request ? new Request(input, init) : new Request(input.toString(), init);
+    const url = request.url;
+    const ok = (body: unknown, status = 200) =>
+      new Response(JSON.stringify(body), {
+        status,
+        headers: { 'content-type': 'application/json' },
+      });
     const m = url.match(/\/orders\/(\d+)(?:\?|$)/);
     if (m) {
       const id = Number(m[1]);
@@ -26,7 +44,17 @@ function stubWoo(orders: OrderRow[]) {
   });
 }
 
-afterEach(() => vi.unstubAllGlobals());
+beforeEach(() => {
+  safeFetchMock.mockReset();
+  resolveWooConfig.mockReset().mockResolvedValue({
+    url: 'https://shop.example.com',
+    consumerKey: 'ck_test',
+    consumerSecret: 'cs_test',
+    configured: true,
+  });
+});
+
+afterEach(() => vi.restoreAllMocks());
 
 describe('resolveOrderByNumber', () => {
   it('resolves directly when number === id', async () => {

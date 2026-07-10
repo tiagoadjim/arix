@@ -81,8 +81,8 @@ off to a human — your choice, set per deployment.
 
 ## Quickstart (Docker)
 
-Three steps, ending at the setup wizard — no manual config file editing beyond
-one secret.
+Three steps, ending at the setup wizard — only secrets and the database
+password need manual configuration.
 
 1. **Configure the minimum:**
 
@@ -90,8 +90,9 @@ one secret.
    cp env.example .env
    ```
 
-   Open `.env` and set `AUTH_JWT_SECRET` (generate one: `openssl rand -hex 32`)
-   plus a `POSTGRES_PASSWORD`. Everything else — LLM provider, WooCommerce
+   Open `.env` and set `AUTH_JWT_SECRET`, `SETTINGS_ENCRYPTION_KEY`, and
+   `SETUP_TOKEN` (generate all three independently with
+   `openssl rand -hex 32`), plus a `POSTGRES_PASSWORD`. Everything else — LLM provider, WooCommerce
    credentials, business profile — is configured from the dashboard next.
 
 2. **Start everything:**
@@ -101,10 +102,13 @@ one secret.
    ```
 
    Postgres, the server, and the dashboard all come up together; the schema
-   migrates itself on first boot.
+   migrates itself on first boot. Compose binds the dashboard only to
+   `127.0.0.1`; do not widen that binding or publish it before creating the
+   first administrator.
 
-3. **Open `http://localhost:3000`.** You'll land on the setup wizard:
-   create an admin account, pick and test an AI provider, connect
+3. **Open `http://localhost:3000`.** You'll land on the setup wizard. Paste
+   the `SETUP_TOKEN` from `.env` to create the one and only bootstrap admin,
+   then pick and test an AI provider, connect
    WooCommerce, fill in your business profile, and scan the WhatsApp QR code
    — right there in the browser, no log-scanning required. If a QR expires,
    there's a regenerate button.
@@ -114,12 +118,12 @@ wizard isn't reachable) is documented in [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## Local development
 
-Requirements: Node 20+ (tested on Node 24), [pnpm](https://pnpm.io), and a
+Requirements: Node 24.x LTS, [pnpm](https://pnpm.io), and a
 Postgres instance (local or Docker).
 
 ```bash
 pnpm install
-cp env.example .env              # fill in DATABASE_URL and AUTH_JWT_SECRET
+cp env.example .env              # fill in DATABASE_URL, AUTH_JWT_SECRET and SETUP_TOKEN
 pnpm dev:server                  # terminal 1 — API + WhatsApp gateway
 pnpm dev:dashboard                # terminal 2 — http://localhost:3000
 ```
@@ -130,9 +134,12 @@ poppler: `brew install poppler` (macOS) or `apt install poppler-utils`
 for a photo instead of a PDF.
 
 ```bash
-pnpm -w typecheck   # TypeScript, both packages
-pnpm test           # server test suite (vitest)
-pnpm lint           # eslint (non-blocking in CI)
+pnpm typecheck      # TypeScript, both packages
+pnpm test           # server + dashboard suites (Vitest)
+pnpm --filter @arix/dashboard test:e2e  # critical browser flows (Playwright)
+pnpm lint           # ESLint; warnings fail locally and in CI
+pnpm build          # production builds, server + dashboard
+pnpm audit:prod     # production dependency audit
 ```
 
 ## Configuration
@@ -140,8 +147,10 @@ pnpm lint           # eslint (non-blocking in CI)
 Almost everything — LLM provider and key, WooCommerce credentials, business
 profile, agent persona, payment/shipping info — lives encrypted in Postgres
 and is edited from the dashboard's Settings page (or the first-run wizard).
-Secrets are encrypted at rest (AES-256-GCM, key derived from
-`AUTH_JWT_SECRET`) and are never sent to the browser in plaintext.
+Secrets are encrypted at rest with versioned AES-256-GCM envelopes and an
+independent `SETTINGS_ENCRYPTION_KEY`; they are never sent to the browser in
+plaintext. Existing installations can temporarily fall back to the legacy
+JWT-derived key while rotating.
 
 Any of those fields can also be **seeded from an environment variable** (see
 `env.example`, section 2). Precedence is **env > database > default**: while
@@ -152,18 +161,28 @@ Only a handful of variables are env-only (no dashboard equivalent):
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `AUTH_JWT_SECRET` | — (required) | Session signing + settings-encryption root. Rotating it logs everyone out and invalidates stored secrets. |
+| `AUTH_JWT_SECRET` | — (required) | Session signing only. Rotating it logs everyone out. Use a different value from the settings key. |
+| `SETUP_TOKEN` | — (required) | One-shot credential entered to create the first admin (min 32 chars); never exposed as a dashboard environment variable. |
+| `SETTINGS_ENCRYPTION_KEY` | JWT fallback | Active AES settings key (min 32 chars); strongly recommended for new/production installs. |
+| `SETTINGS_ENCRYPTION_KEY_PREVIOUS` | — | Comma-separated old settings keys kept temporarily while startup re-encrypts stored secrets. |
 | `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | `arix` / — / `arix` | Docker Compose's Postgres container + the server's connection string. |
 | `DATABASE_URL` | — | Local dev only — points the server at your own Postgres (Compose sets this internally). |
 | `PORT` | `3001` | Server API port (not published to the host in Docker). |
 | `RECEIPTS_DIR` | `./data/receipts` | Where receipt images are stored (a volume in Docker). |
+| `MAX_MEDIA_BYTES` / `MAX_PDF_BYTES` | `10485760` | Download and PDF receipt size limits (10 MiB each). |
+| `PDF_TIMEOUT_MS` | `15000` | Hard timeout for PDF rasterization. |
+| `RECEIPT_RETENTION_DAYS` | `90` | Receipt-file retention; `0` or less disables cleanup. |
+| `ALLOW_PRIVATE_NETWORKS` | `false` | Explicit opt-in for a trusted WooCommerce host on a LAN/private IP. |
+| `ALLOW_INSECURE_HTTP` | `false` | Explicit opt-in for HTTP; keep disabled for public integrations. |
 | `LOG_LEVEL` | `info` | pino log level. |
 | `COOKIE_SECURE` | `false` | Set `true` when serving the dashboard over HTTPS (see the VPS guide). |
 | `WA_ACCOUNT_ID` | `default` | Namespaces the WhatsApp session stored in Postgres. |
 | `WA_MARK_ONLINE` | `false` | Whether WhatsApp shows the account as online. |
+| `WA_QR_TERMINAL` | `false` | Print pairing QR in terminal logs; leave off and use the authenticated dashboard. |
 | `AGENT_HISTORY_LIMIT` | `30` | Messages of conversation history kept per reply. |
 | `AGENT_DEBOUNCE_MS` | `60000` | Wait after the customer's last message before replying (batches quick follow-ups). |
 | `AGENT_MAX_BUBBLES` | `3` | Max WhatsApp bubbles per reply. |
+| `AGENT_TURN_TIMEOUT_MS` | `90000` | Total budget for an agent turn across retries, backoff, and tools. |
 
 ## Deploying to a VPS
 
@@ -179,10 +198,11 @@ backups, and zero-downtime updates.
 - **Grounding lock** — the agent is never allowed to state a price or stock
   level from memory: product questions force a live `search_catalog` call
   first, so it can't invent numbers.
-- **Deterministic payment validation** — the amount read from a receipt is
-  compared against the order total in code (with a configurable tolerance),
-  and a payment can only confirm an order that's still in a pre-payment
-  status — a refunded or cancelled order can never be silently reactivated.
+- **Safe payment review** — the amount read from a receipt is compared against
+  the order total in code, duplicate receipt hashes are rejected, and matches
+  require staff review by default. Automatic confirmation is an explicit
+  opt-in intended only for deployments with independent reconciliation; a
+  refunded or cancelled order can never be silently reactivated.
 - **Versioned migrations** — schema changes ship as numbered SQL files in
   `server/src/db/migrations/`, applied once each and tracked in a
   `schema_migrations` table. Safe to run on every boot.

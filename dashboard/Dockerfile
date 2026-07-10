@@ -32,6 +32,9 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY dashboard/package.json ./dashboard/package.json
 RUN pnpm install --frozen-lockfile --filter @arix/dashboard
 
+# Next 15 runs ESLint as part of `next build`. Keep the same root flat config
+# inside the builder so container builds enforce the React/Next rules too.
+COPY eslint.config.js ./eslint.config.js
 COPY dashboard ./dashboard
 
 ENV NEXT_TELEMETRY_DISABLED=1
@@ -50,6 +53,11 @@ COPY --from=builder /app/dashboard/.next/standalone ./
 # trace (Next.js docs) and must be copied alongside it explicitly.
 COPY --from=builder /app/dashboard/public ./dashboard/public
 COPY --from=builder /app/dashboard/.next/static ./dashboard/.next/static
+
+# The standalone server only needs read access to its traced files and write
+# access to Next's cache. Do not leave the internet-facing process as root.
+RUN chown -R node:node /app
+USER node
 
 EXPOSE 3000
 CMD ["node", "dashboard/server.js"]

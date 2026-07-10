@@ -22,6 +22,11 @@ cp env.example .env
 Edit `.env` and set at minimum:
 
 - `AUTH_JWT_SECRET` — a long random string (`openssl rand -hex 32`).
+- `SETUP_TOKEN` — another independent random value (`openssl rand -hex 32`).
+  You will paste it once when creating the first administrator; it is never
+  injected into the dashboard container.
+- `SETTINGS_ENCRYPTION_KEY` — another independently generated value
+  (`openssl rand -hex 32`), used only for AES-encrypted dashboard settings.
 - `POSTGRES_PASSWORD` — a strong password for the Postgres container.
 - `COOKIE_SECURE=true` — **required** once the dashboard is served over
   HTTPS; the session cookie won't be sent over plain HTTP otherwise (browsers
@@ -32,6 +37,13 @@ Everything else (LLM provider, WooCommerce credentials, business profile) is
 configured from the dashboard's setup wizard after first boot — see the main
 [README](../README.md#quickstart-docker).
 
+To rotate the settings key without losing credentials, move the current value
+to `SETTINGS_ENCRYPTION_KEY_PREVIOUS`, put a new independently generated value
+in `SETTINGS_ENCRYPTION_KEY`, and restart. Arix re-encrypts stored secrets with
+the active key during startup. After a successful start and backup, remove the
+previous-key variable and restart once more. Multiple previous keys may be
+comma-separated during a staged rotation.
+
 ## 2. Start Arix
 
 ```bash
@@ -39,11 +51,25 @@ docker compose up -d --build
 ```
 
 This starts Postgres, the server, and the dashboard. The dashboard listens on
-`127.0.0.1:3000` by default via the `docker-compose.yml` port mapping — it's
-**not** meant to be exposed directly to the internet. Caddy sits in front of
-it instead.
+`127.0.0.1:3000` via the `docker-compose.yml` port mapping — it is not
+reachable from the internet.
 
-## 3. Put Caddy in front (automatic HTTPS)
+## 3. Complete the private bootstrap
+
+**Do not publish the dashboard or configure the public reverse proxy before
+the first administrator exists.** From your workstation, open an SSH tunnel:
+
+```bash
+ssh -L 3000:127.0.0.1:3000 your-user@your-vps
+```
+
+While that session stays open, visit `http://localhost:3000`, paste the
+`SETUP_TOKEN` from the VPS `.env`, and create the administrator. The token is
+checked with a constant-time comparison and is not stored by the dashboard;
+the bootstrap endpoint is permanently disabled as soon as any staff account
+exists. Finish or safely skip the remaining wizard steps before continuing.
+
+## 4. Put Caddy in front (automatic HTTPS)
 
 Install Caddy on the host (not in the compose file, so it can also front
 other services on the same VPS if you have any):
@@ -70,8 +96,8 @@ sudo systemctl reload caddy
 
 That's it — Caddy issues and renews a Let's Encrypt certificate automatically
 and proxies everything to the dashboard, which in turn proxies `/api/*` to
-the server. Visit `https://your-domain.com` and continue with the setup
-wizard.
+the server. Visit `https://your-domain.com` and sign in with the administrator
+you created through the private tunnel.
 
 ## Backups
 

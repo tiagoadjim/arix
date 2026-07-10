@@ -86,7 +86,7 @@ export const catalogTools: ToolSpec[] = [
         },
       },
     },
-    handler: async (args) => {
+    handler: async (args, ctx) => {
       const query = String(args.query ?? '').trim();
       const inStockOnly = args.in_stock_only === true;
       const [products, wc] = await Promise.all([
@@ -94,7 +94,7 @@ export const catalogTools: ToolSpec[] = [
           search: query,
           stockStatus: inStockOnly ? 'instock' : undefined,
           perPage: 10,
-        }),
+        }, ctx.signal),
         wooConfig(),
       ]);
 
@@ -115,10 +115,12 @@ export const catalogTools: ToolSpec[] = [
         };
         if (p.type === 'variable' && p.variations?.length && enriched < 5) {
           try {
-            const variations = await woo.getVariations(p.id);
+            if (ctx.signal?.aborted) throw ctx.signal.reason;
+            const variations = await woo.getVariations(p.id, ctx.signal);
             base.variations = variations.map(variationSummary);
             enriched += 1;
           } catch (err) {
+            if (ctx.signal?.aborted) throw ctx.signal.reason;
             logger.warn({ err, productId: p.id }, 'failed to load variations');
           }
         }
@@ -145,15 +147,16 @@ export const catalogTools: ToolSpec[] = [
         },
       },
     },
-    handler: async (args) => {
+    handler: async (args, ctx) => {
       const id = Number(args.product_id);
       if (!Number.isFinite(id)) return { error: 'invalid_product_id' };
-      const [p, wc] = await Promise.all([woo.getProduct(id), wooConfig()]);
+      const [p, wc] = await Promise.all([woo.getProduct(id, ctx.signal), wooConfig()]);
       let variations: unknown = undefined;
       if (p.type === 'variable' && p.variations?.length) {
         try {
-          variations = (await woo.getVariations(p.id)).map(variationSummary);
+          variations = (await woo.getVariations(p.id, ctx.signal)).map(variationSummary);
         } catch (err) {
+          if (ctx.signal?.aborted) throw ctx.signal.reason;
           logger.warn({ err, productId: p.id }, 'failed to load variations');
         }
       }

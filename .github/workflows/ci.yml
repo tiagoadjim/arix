@@ -8,6 +8,25 @@ on:
 jobs:
   ci:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/arix_test
+      AUTH_JWT_SECRET: ci-only-auth-secret-at-least-32-characters
+      SETUP_TOKEN: ci-only-setup-token-at-least-32-characters
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: arix_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d arix_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
 
@@ -21,15 +40,103 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Audit production dependencies
+        run: pnpm audit:prod
+
+      - name: Lint
+        run: pnpm lint
+
       - name: Typecheck
         run: pnpm -w typecheck
+
+      - name: PostgreSQL migrations smoke test
+        env:
+          SETTINGS_ENCRYPTION_KEY: ci-only-settings-encryption-key-at-least-32-characters
+        run: |
+          pnpm --filter @arix/server exec node --import tsx --input-type=module <<'NODE'
+          const { migrate, pool } = await import('./src/db/pool.ts');
+          try {
+            await migrate();
+            await migrate();
+            const { rows } = await pool.query('select count(*)::int as count from schema_migrations');
+            if ((rows[0]?.count ?? 0) < 1) throw new Error('No migrations were recorded');
+            const secrets = await import('./src/config/secret.ts');
+            const envelope = secrets.encryptSecret('ci-round-trip');
+            if (
+              !secrets.usingIndependentEncryptionKey() ||
+              secrets.decryptSecret(envelope) !== 'ci-round-trip'
+            ) {
+              throw new Error('Independent settings encryption key smoke test failed');
+            }
+          } finally {
+            await pool.end();
+          }
+          NODE
 
       - name: Test (server)
         run: pnpm --filter @arix/server test
 
+      - name: Test (dashboard)
+        run: pnpm --filter @arix/dashboard test
+
+      - name: Build (server)
+        run: pnpm --filter @arix/server build
+
       - name: Build (dashboard)
         run: pnpm --filter @arix/dashboard build
 
-      - name: Lint
-        run: pnpm lint
-        continue-on-error: true
+  docker-smoke:
+    needs: ci
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure smoke environment
+        run: |
+          cat > .env <<'EOF'
+          AUTH_JWT_SECRET=ci-only-auth-secret-at-least-32-characters
+          SETUP_TOKEN=ci-only-setup-token-at-least-32-characters
+          SETTINGS_ENCRYPTION_KEY=ci-only-settings-encryption-key-at-least-32-characters
+          POSTGRES_USER=arix
+          POSTGRES_PASSWORD=arix-smoke-password
+          POSTGRES_DB=arix
+          COOKIE_SECURE=false
+          EOF
+
+      - name: Build and start the production stack
+        run: docker compose up --build --detach --wait --wait-timeout 240
+
+      - name: Verify dashboard-to-server proxy
+        run: curl --fail --show-error --retry 5 --retry-all-errors http://localhost:3000/api/setup/status
+
+      - name: Show container logs on failure
+        if: failure()
+        run: docker compose logs --no-color
+
+      - name: Stop production stack
+        if: always()
+        run: docker compose down --volumes
+
+  dashboard-e2e:
+    needs: ci
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Chromium
+        run: pnpm --filter @arix/dashboard exec playwright install --with-deps chromium
+
+      - name: Test dashboard journeys
+        run: pnpm --filter @arix/dashboard test:e2e

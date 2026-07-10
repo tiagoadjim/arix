@@ -171,7 +171,7 @@ function WizardChrome({
 }) {
   const { t } = useT();
   return (
-    <div className="grid min-h-screen place-items-center bg-background p-4">
+    <main id="main-content" tabIndex={-1} className="grid min-h-dvh place-items-center bg-background p-4 outline-none">
       <Card className="w-full max-w-xl">
         <CardHeader className="flex flex-col items-center gap-3 text-center">
           <Logo markClassName="h-8 w-8 text-primary" />
@@ -190,7 +190,7 @@ function WizardChrome({
         </CardHeader>
         <CardContent>{children}</CardContent>
       </Card>
-    </div>
+    </main>
   );
 }
 
@@ -213,6 +213,7 @@ function WelcomeStep({ uiLanguage, onPick }: { uiLanguage: Locale; onPick: (loca
 
 function AdminStep({ onCreated }: { onCreated: () => void }) {
   const { t } = useT();
+  const [setupToken, setSetupToken] = useState('');
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -225,6 +226,10 @@ function AdminStep({ onCreated }: { onCreated: () => void }) {
     e.preventDefault();
     setError(null);
     setAlreadyDone(false);
+    if (!setupToken) {
+      setError(t.wizard.admin.setupTokenRequired);
+      return;
+    }
     if (password.length < 8) {
       setError(t.wizard.admin.passwordTooShort);
       return;
@@ -235,7 +240,8 @@ function AdminStep({ onCreated }: { onCreated: () => void }) {
     }
     setSubmitting(true);
     try {
-      await api.setupAdmin({ name: name.trim(), email: email.trim(), password });
+      await api.setupAdmin({ setupToken, name: name.trim(), email: email.trim(), password });
+      setSetupToken('');
       onCreated();
     } catch (err) {
       // Coupled to the exact stable code server/src/api/server.ts's POST
@@ -261,8 +267,22 @@ function AdminStep({ onCreated }: { onCreated: () => void }) {
   return (
     <form onSubmit={(e) => void submit(e)} className="flex flex-col gap-4" noValidate>
       <div className="flex flex-col gap-1.5">
+        <Label htmlFor="admin-setup-token">{t.wizard.admin.setupTokenLabel}</Label>
+        <Input
+          id="admin-setup-token"
+          type="password"
+          autoComplete="off"
+          spellCheck={false}
+          value={setupToken}
+          onChange={(e) => setSetupToken(e.target.value)}
+          autoFocus
+          required
+        />
+        <p className="text-xs text-muted-foreground">{t.wizard.admin.setupTokenHint}</p>
+      </div>
+      <div className="flex flex-col gap-1.5">
         <Label htmlFor="admin-name">{t.wizard.admin.nameLabel}</Label>
-        <Input id="admin-name" value={name} onChange={(e) => setName(e.target.value)} autoFocus />
+        <Input id="admin-name" value={name} onChange={(e) => setName(e.target.value)} />
       </div>
       <div className="flex flex-col gap-1.5">
         <Label htmlFor="admin-email">{t.wizard.admin.emailLabel}</Label>
@@ -381,7 +401,7 @@ function StoreStep({
 
   return (
     <div className="flex flex-col gap-5">
-      <StoreFields values={values} onChange={setValues} wc={wc} disabled={saving} />
+      <StoreFields values={values} onChange={setValues} wc={wc} payment={payment} disabled={saving} />
       <div className="flex items-center justify-between">
         <SkipLink onClick={onSkip} disabled={saving}>
           {t.wizard.store.skipLink}
@@ -443,6 +463,7 @@ function BusinessStep({
         onChange={setValues}
         uiLanguage={uiLanguage}
         onUiLanguageChange={onUiLanguageChange}
+        dtos={dtos}
         disabled={saving}
       />
       <Button onClick={() => void handleNext()} disabled={saving} className="w-fit self-end">

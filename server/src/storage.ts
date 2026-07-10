@@ -1,4 +1,4 @@
-import { mkdir, writeFile, readFile } from 'node:fs/promises';
+import { mkdir, writeFile, readFile, readdir, stat, unlink, rmdir } from 'node:fs/promises';
 import { dirname, resolve, normalize, sep } from 'node:path';
 import { config } from './config';
 import { logger } from './logger';
@@ -32,4 +32,47 @@ export async function readReceiptImage(objectPath: string): Promise<Buffer | nul
   } catch {
     return null;
   }
+}
+
+export async function cleanupExpiredReceipts(now = Date.now()): Promise<number> {
+  const retentionDays = config.RECEIPT_RETENTION_DAYS;
+  if (!Number.isFinite(retentionDays) || retentionDays <= 0) return 0;
+  const cutoff = now - retentionDays * 24 * 60 * 60 * 1000;
+  let removed = 0;
+
+  const walk = async (dir: string): Promise<void> => {
+    let entries;
+    try {
+      entries = await readdir(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const full = resolve(dir, entry.name);
+      if (full !== ROOT && !full.startsWith(ROOT + sep)) continue;
+      if (entry.isDirectory()) {
+        await walk(full);
+        await rmdir(full).catch(() => {});
+      } else if (entry.isFile()) {
+        const info = await stat(full).catch(() => null);
+        if (info && info.mtimeMs < cutoff) {
+          await unlink(full).catch(() => {});
+          removed += 1;
+        }
+      }
+    }
+  };
+  await walk(ROOT);
+  if (removed > 0) logger.info({ removed, retentionDays }, 'expired receipt files removed');
+  return removed;
+}
+
+export function startReceiptCleanup(): () => void {
+  void cleanupExpiredReceipts().catch((err) => logger.warn({ err }, 'receipt retention cleanup failed'));
+  const timer = setInterval(
+    () => void cleanupExpiredReceipts().catch((err) => logger.warn({ err }, 'receipt retention cleanup failed')),
+    24 * 60 * 60 * 1000,
+  );
+  timer.unref();
+  return () => clearInterval(timer);
 }

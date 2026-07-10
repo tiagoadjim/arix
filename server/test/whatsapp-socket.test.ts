@@ -1,12 +1,15 @@
-import { vi, describe, it, expect, beforeEach } from 'vitest';
+import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
+
+type EventHandler = (payload: never) => void;
 
 // Fake Baileys socket + makeWASocket() factory. Each call returns a fresh
-// fake socket so WhatsAppGateway.start() creating a new one is observable.
+// socket and retains registered callbacks so lifecycle races can be exercised.
 const { makeWASocketMock, sockets, DisconnectReason } = vi.hoisted(() => {
   const sockets: Array<{
     ev: { on: ReturnType<typeof vi.fn>; removeAllListeners: ReturnType<typeof vi.fn> };
     end: ReturnType<typeof vi.fn>;
     logout: ReturnType<typeof vi.fn>;
+    sendMessage: ReturnType<typeof vi.fn>;
     user?: { id: string };
   }> = [];
   const makeWASocketMock = vi.fn(() => {
@@ -14,6 +17,7 @@ const { makeWASocketMock, sockets, DisconnectReason } = vi.hoisted(() => {
       ev: { on: vi.fn(), removeAllListeners: vi.fn() },
       end: vi.fn(),
       logout: vi.fn().mockResolvedValue(undefined),
+      sendMessage: vi.fn().mockResolvedValue({ key: { id: 'sent-id' } }),
     };
     sockets.push(sock);
     return sock;
@@ -28,105 +32,372 @@ vi.mock('baileys', () => ({
   DisconnectReason,
 }));
 vi.mock('qrcode-terminal', () => ({ default: { generate: vi.fn() }, generate: vi.fn() }));
-vi.mock('../src/logger', () => ({
-  logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), fatal: vi.fn() },
-}));
 
-const { usePostgresAuthState, clearStateMock } = vi.hoisted(() => {
-  const clearStateMock = vi.fn().mockResolvedValue(undefined);
-  const usePostgresAuthState = vi.fn().mockResolvedValue({
-    state: { creds: {}, keys: {} },
-    saveCreds: vi.fn(),
-    clearState: clearStateMock,
-  });
-  return { usePostgresAuthState, clearStateMock };
-});
+const { loggerMock } = vi.hoisted(() => ({
+  loggerMock: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), fatal: vi.fn() },
+}));
+vi.mock('../src/logger', () => ({ logger: loggerMock, logIdentifier: vi.fn(() => 'hash') }));
+
+const { usePostgresAuthState, clearStateMock, saveCredsMock } = vi.hoisted(() => ({
+  usePostgresAuthState: vi.fn(),
+  clearStateMock: vi.fn(),
+  saveCredsMock: vi.fn(),
+}));
 vi.mock('../src/whatsapp/auth-postgres', () => ({ usePostgresAuthState }));
 
 import { WhatsAppGateway } from '../src/whatsapp/socket';
 
+function authState() {
+  return {
+    state: { creds: {}, keys: {} },
+    saveCreds: saveCredsMock,
+    clearState: clearStateMock,
+  };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+function handler(
+  sock: (typeof sockets)[number],
+  event: 'creds.update' | 'connection.update' | 'messages.upsert',
+): EventHandler {
+  const call = (sock.ev.on.mock.calls as Array<[string, EventHandler]>).find(([name]) => name === event);
+  expect(call, `missing ${event} handler`).toBeDefined();
+  return call![1];
+}
+
+async function flushPromises(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
 beforeEach(() => {
   sockets.length = 0;
   makeWASocketMock.mockClear();
-  usePostgresAuthState.mockClear();
-  clearStateMock.mockClear();
+  loggerMock.info.mockReset();
+  loggerMock.warn.mockReset();
+  loggerMock.error.mockReset();
+  loggerMock.fatal.mockReset();
+  clearStateMock.mockReset().mockResolvedValue(undefined);
+  saveCredsMock.mockReset().mockResolvedValue(undefined);
+  usePostgresAuthState.mockReset().mockImplementation(async () => authState());
+});
+
+afterEach(() => vi.useRealTimers());
+
+describe('WhatsAppGateway lifecycle', () => {
+  it('coalesces concurrent start calls into one auth read and one socket', async () => {
+    const pending = deferred<ReturnType<typeof authState>>();
+    usePostgresAuthState.mockReturnValueOnce(pending.promise);
+    const gateway = new WhatsAppGateway();
+
+    const first = gateway.start();
+    const second = gateway.start();
+    expect(second).toBe(first);
+    expect(usePostgresAuthState).toHaveBeenCalledTimes(0);
+
+    pending.resolve(authState());
+    await Promise.all([first, second]);
+
+    expect(usePostgresAuthState).toHaveBeenCalledTimes(1);
+    expect(makeWASocketMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('generation-fences a slow start when restart wins the race', async () => {
+    const pending = deferred<ReturnType<typeof authState>>();
+    usePostgresAuthState.mockReturnValueOnce(pending.promise);
+    const gateway = new WhatsAppGateway();
+
+    const obsoleteStart = gateway.start();
+    await vi.waitFor(() => expect(usePostgresAuthState).toHaveBeenCalledTimes(1));
+    const restart = gateway.restart();
+    pending.resolve(authState());
+
+    await Promise.all([obsoleteStart, restart]);
+    expect(usePostgresAuthState).toHaveBeenCalledTimes(2);
+    expect(makeWASocketMock).toHaveBeenCalledTimes(1);
+    expect(gateway.sock).toBe(sockets[0]);
+  });
+
+  it('stop waits for an in-flight start and prevents it from publishing a socket', async () => {
+    const pending = deferred<ReturnType<typeof authState>>();
+    usePostgresAuthState.mockReturnValueOnce(pending.promise);
+    const gateway = new WhatsAppGateway();
+
+    const start = gateway.start();
+    await flushPromises();
+    let stopped = false;
+    const stop = gateway.stop().then(() => {
+      stopped = true;
+    });
+    await flushPromises();
+    expect(stopped).toBe(false);
+
+    pending.resolve(authState());
+    await Promise.all([start, stop]);
+    expect(makeWASocketMock).not.toHaveBeenCalled();
+    expect(gateway.sock).toBeNull();
+    expect(gateway.stopped).toBe(true);
+  });
 });
 
 describe('WhatsAppGateway.restart()', () => {
-  it('without clearSession: just tears down and reconnects with the same stored creds (no logout, no state clear)', async () => {
-    const gw = new WhatsAppGateway();
-    await gw.start();
+  it('without clearSession tears down and reconnects with the same stored creds', async () => {
+    const gateway = new WhatsAppGateway();
+    await gateway.start();
     const firstSock = sockets[0]!;
 
-    await gw.restart();
+    await gateway.restart();
 
     expect(firstSock.logout).not.toHaveBeenCalled();
     expect(clearStateMock).not.toHaveBeenCalled();
-    expect(makeWASocketMock).toHaveBeenCalledTimes(2); // one fresh socket for the restart
+    expect(makeWASocketMock).toHaveBeenCalledTimes(2);
   });
 
-  it('with clearSession: true — logs out the current socket AND clears persisted auth state before reconnecting (real re-pair)', async () => {
-    const gw = new WhatsAppGateway();
-    await gw.start();
+  it('clearSession logs out, clears persisted auth, then reconnects for a real re-pair', async () => {
+    const gateway = new WhatsAppGateway();
+    await gateway.start();
     const firstSock = sockets[0]!;
 
-    await gw.restart({ clearSession: true });
+    await gateway.restart({ clearSession: true });
 
     expect(firstSock.logout).toHaveBeenCalledTimes(1);
     expect(clearStateMock).toHaveBeenCalledTimes(1);
     expect(makeWASocketMock).toHaveBeenCalledTimes(2);
   });
 
-  it('with clearSession: true — a failed logout() never blocks clearing state and restarting', async () => {
-    const gw = new WhatsAppGateway();
-    await gw.start();
+  it('a failed logout never blocks clearing state and restarting', async () => {
+    const gateway = new WhatsAppGateway();
+    await gateway.start();
     const firstSock = sockets[0]!;
     firstSock.logout.mockRejectedValueOnce(new Error('socket already closed'));
 
-    await expect(gw.restart({ clearSession: true })).resolves.toBeUndefined();
+    await expect(gateway.restart({ clearSession: true })).resolves.toBeUndefined();
 
     expect(clearStateMock).toHaveBeenCalledTimes(1);
     expect(makeWASocketMock).toHaveBeenCalledTimes(2);
   });
 
-  it('with clearSession: true and no live socket/state yet — skips logout and the (unset) clearState, but still starts fresh', async () => {
-    const gw = new WhatsAppGateway(); // never started, so there's nothing to log out of or clear yet
+  it('clearSession erases DB state even before a live socket/state clearer exists', async () => {
+    const gateway = new WhatsAppGateway();
 
-    await expect(gw.restart({ clearSession: true })).resolves.toBeUndefined();
+    await expect(gateway.restart({ clearSession: true })).resolves.toBeUndefined();
 
-    expect(clearStateMock).not.toHaveBeenCalled();
+    // First auth load obtains the DB clearer, second initializes the fresh
+    // socket after deletion.
+    expect(usePostgresAuthState).toHaveBeenCalledTimes(2);
+    expect(clearStateMock).toHaveBeenCalledTimes(1);
     expect(makeWASocketMock).toHaveBeenCalledTimes(1);
   });
 
-  it('with clearSession: true — a close event fired WHILE logout() is in flight is ignored (handleClose early-returns on `stopped`), so clearState is never called twice', async () => {
-    const gw = new WhatsAppGateway();
-    await gw.start();
-    const firstSock = sockets[0]!;
+  it('fails closed when persisted auth cannot be cleared, and only a successful forced retry unblocks it', async () => {
+    const gateway = new WhatsAppGateway();
+    clearStateMock.mockRejectedValueOnce(new Error('database unavailable'));
 
-    // Grab the 'connection.update' handler socket.ts registered on this
-    // socket, so we can simulate Baileys firing its own close event as a
-    // side effect of logout() — a real scenario, since logging out a socket
-    // can itself trigger a 'close'.
-    const onCalls = firstSock.ev.on.mock.calls as Array<[string, (update: unknown) => void]>;
-    const connectionUpdateHandler = onCalls.find(([event]) => event === 'connection.update')?.[1];
-    expect(connectionUpdateHandler).toBeDefined();
+    await expect(gateway.restart({ clearSession: true })).rejects.toThrow('database unavailable');
+    expect(gateway.stopped).toBe(true);
+    expect(gateway.sock).toBeNull();
+    expect(makeWASocketMock).not.toHaveBeenCalled();
+
+    await expect(gateway.restart()).rejects.toThrow('database unavailable');
+    expect(makeWASocketMock).not.toHaveBeenCalled();
+
+    await expect(gateway.restart({ clearSession: true })).resolves.toBeUndefined();
+    expect(makeWASocketMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignores the close event emitted by logout so auth is cleared exactly once', async () => {
+    const gateway = new WhatsAppGateway();
+    await gateway.start();
+    const firstSock = sockets[0]!;
+    const onConnectionUpdate = handler(firstSock, 'connection.update');
 
     firstSock.logout.mockImplementationOnce(async () => {
-      // Fired mid-restart, while `this.stopped` is already true (set by
-      // restart() before calling logout()) and `this.sock` still === firstSock
-      // (teardownSocket() hasn't run yet) — handleClose() must early-return
-      // instead of running its own DisconnectReason.loggedOut clearState().
-      connectionUpdateHandler!({
+      onConnectionUpdate({
         connection: 'close',
         lastDisconnect: { error: { output: { statusCode: DisconnectReason.loggedOut } } },
-      });
+      } as never);
     });
 
-    await gw.restart({ clearSession: true });
-
-    // Only restart()'s own explicit clearState() call — handleClose()'s
-    // loggedOut branch never ran a second one.
+    await gateway.restart({ clearSession: true });
     expect(clearStateMock).toHaveBeenCalledTimes(1);
     expect(makeWASocketMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('WhatsAppGateway async event serialization', () => {
+  it('drains every admitted per-JID message before closing the transport', async () => {
+    const handled = deferred<void>();
+    const gateway = new WhatsAppGateway();
+    gateway.onMessage = vi.fn(() => handled.promise);
+    await gateway.start();
+    const firstSock = sockets[0]!;
+    handler(firstSock, 'messages.upsert')({
+      type: 'notify',
+      messages: [{ key: { id: 'admitted', remoteJid: 'a@example', fromMe: false } }],
+    } as never);
+    await flushPromises();
+
+    const stop = gateway.stop();
+    await flushPromises();
+    expect(firstSock.end).not.toHaveBeenCalled();
+
+    handled.resolve();
+    await stop;
+    expect(firstSock.end).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps retrying an automatic reconnect when socket creation fails transiently', async () => {
+    const gateway = new WhatsAppGateway();
+    await gateway.start();
+    const firstSock = sockets[0]!;
+    usePostgresAuthState.mockRejectedValueOnce(new Error('temporary database outage'));
+    vi.useFakeTimers();
+
+    handler(firstSock, 'connection.update')({
+      connection: 'close',
+      lastDisconnect: { error: { output: { statusCode: 500 } } },
+    } as never);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(usePostgresAuthState).toHaveBeenCalledTimes(2);
+    expect(gateway.sock).toBeNull();
+
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(usePostgresAuthState).toHaveBeenCalledTimes(3);
+    expect(makeWASocketMock).toHaveBeenCalledTimes(2);
+    expect(gateway.sock).toBe(sockets[1]);
+  });
+
+  it('serializes creds.update writes and stop waits for all admitted writes', async () => {
+    const firstWrite = deferred<void>();
+    const secondWrite = deferred<void>();
+    saveCredsMock
+      .mockImplementationOnce(() => firstWrite.promise)
+      .mockImplementationOnce(() => secondWrite.promise);
+    const gateway = new WhatsAppGateway();
+    await gateway.start();
+    const onCredsUpdate = handler(sockets[0]!, 'creds.update');
+
+    onCredsUpdate(undefined as never);
+    onCredsUpdate(undefined as never);
+    await flushPromises();
+    expect(saveCredsMock).toHaveBeenCalledTimes(1);
+
+    let stopped = false;
+    const stop = gateway.stop().then(() => {
+      stopped = true;
+    });
+    await flushPromises();
+    expect(stopped).toBe(false);
+
+    firstWrite.resolve();
+    await vi.waitFor(() => expect(saveCredsMock).toHaveBeenCalledTimes(2));
+    expect(stopped).toBe(false);
+
+    secondWrite.resolve();
+    await stop;
+    expect(stopped).toBe(true);
+  });
+
+  it('retries a credential write failure and continues the serialized queue', async () => {
+    saveCredsMock.mockRejectedValueOnce(new Error('write failed')).mockResolvedValueOnce(undefined);
+    const gateway = new WhatsAppGateway();
+    await gateway.start();
+    const onCredsUpdate = handler(sockets[0]!, 'creds.update');
+
+    onCredsUpdate(undefined as never);
+    onCredsUpdate(undefined as never);
+    await gateway.stop();
+
+    expect(saveCredsMock).toHaveBeenCalledTimes(3);
+    expect(loggerMock.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ err: expect.any(Error), attempt: 1 }),
+      'retrying WhatsApp credential persistence',
+    );
+    expect(loggerMock.error).not.toHaveBeenCalled();
+  });
+
+  it('processes messages in order per JID while allowing different JIDs in parallel', async () => {
+    const a1Done = deferred<void>();
+    const a2Done = deferred<void>();
+    const b1Done = deferred<void>();
+    const started: string[] = [];
+    const waits = new Map([
+      ['a1', a1Done.promise],
+      ['a2', a2Done.promise],
+      ['b1', b1Done.promise],
+    ]);
+    const gateway = new WhatsAppGateway();
+    gateway.onMessage = vi.fn(async (_sock, message) => {
+      const id = message.key.id!;
+      started.push(id);
+      await waits.get(id);
+    });
+    await gateway.start();
+    const onMessages = handler(sockets[0]!, 'messages.upsert');
+
+    onMessages({
+      type: 'notify',
+      messages: [
+        { key: { id: 'a1', remoteJid: 'a@example', fromMe: false } },
+        { key: { id: 'a2', remoteJid: 'a@example', fromMe: false } },
+        { key: { id: 'b1', remoteJid: 'b@example', fromMe: false } },
+      ],
+    } as never);
+    await flushPromises();
+
+    expect(started).toEqual(['a1', 'b1']);
+    expect(started).not.toContain('a2');
+    b1Done.resolve();
+    await flushPromises();
+    expect(started).not.toContain('a2');
+
+    a1Done.resolve();
+    await vi.waitFor(() => expect(started).toEqual(['a1', 'b1', 'a2']));
+    a2Done.resolve();
+  });
+
+  it('captures rejected connection callbacks instead of creating unhandled rejections', async () => {
+    const gateway = new WhatsAppGateway();
+    gateway.onConnected = async () => {
+      throw new Error('recovery failed');
+    };
+    await gateway.start();
+
+    handler(sockets[0]!, 'connection.update')({ connection: 'open' } as never);
+    await vi.waitFor(() => {
+      expect(loggerMock.error).toHaveBeenCalledWith(
+        expect.objectContaining({ err: expect.any(Error) }),
+        'WhatsApp onConnected callback failed',
+      );
+    });
+  });
+
+  it('captures a logged-out clear failure and leaves the gateway stopped', async () => {
+    const gateway = new WhatsAppGateway();
+    await gateway.start();
+    clearStateMock.mockRejectedValueOnce(new Error('clear failed'));
+
+    handler(sockets[0]!, 'connection.update')({
+      connection: 'close',
+      lastDisconnect: { error: { output: { statusCode: DisconnectReason.loggedOut } } },
+    } as never);
+
+    await vi.waitFor(() => {
+      expect(loggerMock.error).toHaveBeenCalledWith(
+        expect.objectContaining({ err: expect.any(Error), code: DisconnectReason.loggedOut }),
+        'WhatsApp close handler failed; gateway remains stopped',
+      );
+    });
+    expect(gateway.stopped).toBe(true);
+    expect(gateway.sock).toBeNull();
   });
 });

@@ -32,11 +32,27 @@ export function numberValue(key: string, dtos: SettingDto[] | undefined, fallbac
   return typeof v === 'number' ? v : fallback;
 }
 
-/** Non-secret update — included whenever the key isn't env-locked (always
- * re-sent on save; harmless since it round-trips to the same stored value
- * when the field wasn't touched). */
+/** Numeric input constraints come from the server schema via SettingDto, so
+ * setup and settings screens cannot drift from the API write boundary. */
+export function numberBounds(
+  key: string,
+  dtos: SettingDto[] | undefined,
+  fallback: { min?: number; max?: number } = {},
+): { min?: number; max?: number } {
+  const dto = findDto(key, dtos);
+  return {
+    min: dto?.min ?? fallback.min,
+    max: dto?.max ?? fallback.max,
+  };
+}
+
+/** Non-secret update — send only fields that differ from the DTO snapshot.
+ * This makes every save a true PATCH-like batch and prevents a stale tab from
+ * overwriting unrelated settings another administrator changed meanwhile. */
 export function plainUpdate(key: string, value: unknown, dtos: SettingDto[] | undefined): SettingsUpdate | null {
   if (isReadOnly(key, dtos)) return null;
+  const dto = findDto(key, dtos);
+  if (dto && !isDirty(dto.value, value)) return null;
   return { key, value };
 }
 

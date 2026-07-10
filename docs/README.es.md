@@ -88,8 +88,8 @@ despliegue.
 
 ## Puesta en marcha rápida (Docker)
 
-Tres pasos, terminando en el wizard de configuración — sin editar archivos
-de config a mano más que un secreto.
+Tres pasos, terminando en el wizard de configuración — solo hay que definir
+los secretos y la contraseña de la base de datos a mano.
 
 1. **Configurá lo mínimo:**
 
@@ -97,8 +97,9 @@ de config a mano más que un secreto.
    cp env.example .env
    ```
 
-   Abrí `.env` y completá `AUTH_JWT_SECRET` (generá uno con
-   `openssl rand -hex 32`) y un `POSTGRES_PASSWORD`. Todo lo demás —
+   Abrí `.env` y completá `AUTH_JWT_SECRET`, `SETTINGS_ENCRYPTION_KEY` y
+   `SETUP_TOKEN` (generá tres valores distintos con `openssl rand -hex 32`) y un
+   `POSTGRES_PASSWORD`. Todo lo demás —
    proveedor de IA, credenciales de WooCommerce, perfil del negocio — se
    configura después desde el dashboard.
 
@@ -109,10 +110,13 @@ de config a mano más que un secreto.
    ```
 
    Postgres, el server y el dashboard arrancan juntos; el schema se migra
-   solo en el primer arranque.
+   solo en el primer arranque. Compose publica el dashboard únicamente en
+   `127.0.0.1`; no amplíes ese bind ni lo publiques antes de crear el primer
+   administrador.
 
 3. **Abrí `http://localhost:3000`.** Vas a caer en el wizard de
-   configuración: creá una cuenta de admin, elegí y probá un proveedor de
+   configuración. Pegá el `SETUP_TOKEN` de `.env` para crear el único admin
+   de bootstrap; después elegí y probá un proveedor de
    IA, conectá WooCommerce, completá el perfil del negocio y escaneá el QR
    de WhatsApp — ahí mismo en el navegador, sin necesidad de mirar logs. Si
    un QR expira, hay un botón para regenerarlo.
@@ -123,12 +127,12 @@ cuando el wizard no está disponible) está documentado en
 
 ## Desarrollo local
 
-Requisitos: Node 20+ (probado con Node 24), [pnpm](https://pnpm.io), y una
+Requisitos: Node 24.x LTS, [pnpm](https://pnpm.io), y una
 instancia de Postgres (local o Docker).
 
 ```bash
 pnpm install
-cp env.example .env              # completá DATABASE_URL y AUTH_JWT_SECRET
+cp env.example .env              # completá DATABASE_URL, AUTH_JWT_SECRET y SETUP_TOKEN
 pnpm dev:server                  # terminal 1 — API + gateway de WhatsApp
 pnpm dev:dashboard                # terminal 2 — http://localhost:3000
 ```
@@ -139,9 +143,12 @@ visión), instalá poppler: `brew install poppler` (macOS) o
 agente simplemente pide una foto en lugar de un PDF.
 
 ```bash
-pnpm -w typecheck   # TypeScript, ambos paquetes
-pnpm test           # suite de tests del server (vitest)
-pnpm lint           # eslint (no bloqueante en CI)
+pnpm typecheck      # TypeScript, ambos paquetes
+pnpm test           # suites del server y dashboard (Vitest)
+pnpm --filter @arix/dashboard test:e2e  # flujos críticos en navegador (Playwright)
+pnpm lint           # ESLint; warnings fallan localmente y en CI
+pnpm build          # builds de producción, server y dashboard
+pnpm audit:prod     # auditoría de dependencias de producción
 ```
 
 ## Configuración
@@ -149,9 +156,11 @@ pnpm lint           # eslint (no bloqueante en CI)
 Casi todo — proveedor de IA y su clave, credenciales de WooCommerce, perfil
 del negocio, persona del agente, info de pagos/envíos — vive cifrado en
 Postgres y se edita desde la página de Configuración del dashboard (o desde
-el wizard del primer arranque). Los secretos se cifran en reposo
-(AES-256-GCM, clave derivada de `AUTH_JWT_SECRET`) y nunca se envían al
-navegador en texto plano.
+el wizard del primer arranque). Los secretos se cifran en reposo con
+envoltorios AES-256-GCM versionados y una `SETTINGS_ENCRYPTION_KEY`
+independiente; nunca se envían al navegador en texto plano. Las instalaciones
+existentes pueden usar temporalmente el fallback legado derivado del JWT
+mientras rotan sus claves.
 
 Cualquiera de esos campos también se puede **sembrar desde una variable de
 entorno** (ver `env.example`, sección 2). La precedencia es **env > base de
@@ -165,18 +174,28 @@ el dashboard):
 
 | Variable | Default | Propósito |
 |---|---|---|
-| `AUTH_JWT_SECRET` | — (requerida) | Raíz de firma de sesión + cifrado de configuración. Rotarla desloguea a todos e invalida los secretos guardados. |
+| `AUTH_JWT_SECRET` | — (requerida) | Firma de sesión solamente. Rotarla desloguea a todos; usá un valor distinto a la clave de settings. |
+| `SETUP_TOKEN` | — (requerida) | Credencial one-shot para crear el primer admin (mín. 32 caracteres); nunca se expone como variable del contenedor del dashboard. |
+| `SETTINGS_ENCRYPTION_KEY` | fallback a JWT | Clave AES activa para settings (mín. 32 caracteres); muy recomendada en instalaciones nuevas/producción. |
+| `SETTINGS_ENCRYPTION_KEY_PREVIOUS` | — | Claves anteriores separadas por coma, conservadas temporalmente mientras el arranque recifra los secretos. |
 | `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | `arix` / — / `arix` | El contenedor de Postgres de Docker Compose + el connection string del server. |
 | `DATABASE_URL` | — | Solo desarrollo local — apunta el server a tu propio Postgres (Compose lo define internamente). |
 | `PORT` | `3001` | Puerto de la API del server (no se publica al host en Docker). |
 | `RECEIPTS_DIR` | `./data/receipts` | Dónde se guardan las imágenes de comprobantes (un volumen en Docker). |
+| `MAX_MEDIA_BYTES` / `MAX_PDF_BYTES` | `10485760` | Límites de descarga y PDF de comprobantes (10 MiB cada uno). |
+| `PDF_TIMEOUT_MS` | `15000` | Timeout estricto para rasterizar PDFs. |
+| `RECEIPT_RETENTION_DAYS` | `90` | Retención de archivos; `0` o menos desactiva la limpieza. |
+| `ALLOW_PRIVATE_NETWORKS` | `false` | Opt-in explícito para un WooCommerce confiable en una LAN/IP privada. |
+| `ALLOW_INSECURE_HTTP` | `false` | Opt-in explícito para HTTP; mantenelo apagado en integraciones públicas. |
 | `LOG_LEVEL` | `info` | Nivel de log de pino. |
 | `COOKIE_SECURE` | `false` | Poné `true` cuando sirvas el dashboard sobre HTTPS (ver la guía de VPS). |
 | `WA_ACCOUNT_ID` | `default` | Namespacea la sesión de WhatsApp guardada en Postgres. |
 | `WA_MARK_ONLINE` | `false` | Si WhatsApp muestra la cuenta como en línea. |
+| `WA_QR_TERMINAL` | `false` | Imprime el QR en logs; dejalo apagado y usá el dashboard autenticado. |
 | `AGENT_HISTORY_LIMIT` | `30` | Mensajes de historial de conversación por respuesta. |
 | `AGENT_DEBOUNCE_MS` | `60000` | Espera tras el último mensaje del cliente antes de responder (agrupa mensajes seguidos). |
 | `AGENT_MAX_BUBBLES` | `3` | Máximo de burbujas de WhatsApp por respuesta. |
+| `AGENT_TURN_TIMEOUT_MS` | `90000` | Presupuesto total de un turno, incluyendo reintentos, backoff y tools. |
 
 ## Desplegar en un VPS
 
@@ -193,11 +212,11 @@ concisa: Caddy como proxy reverso con HTTPS automático, cómo poner
 - **Bloqueo de grounding** — el agente nunca puede afirmar un precio o un
   stock de memoria: las preguntas sobre productos fuerzan primero una
   llamada real a `search_catalog`, así no puede inventar números.
-- **Validación de pago determinística** — el monto leído del comprobante se
-  compara contra el total de la orden en código (con una tolerancia
-  configurable), y un pago solo puede confirmar una orden que todavía esté
-  en un estado pre-pago — una orden reembolsada o cancelada nunca se puede
-  reactivar en silencio.
+- **Revisión segura de pagos** — el monto leído se compara contra el total en
+  código, se rechazan hashes de comprobantes ya aprobados y las coincidencias
+  requieren revisión humana por defecto. La confirmación automática es un
+  opt-in pensado solo para despliegues con conciliación independiente; una
+  orden reembolsada o cancelada nunca se reactiva en silencio.
 - **Migraciones versionadas** — los cambios de schema se distribuyen como
   archivos SQL numerados en `server/src/db/migrations/`, cada uno se aplica
   una sola vez y queda registrado en una tabla `schema_migrations`. Seguro

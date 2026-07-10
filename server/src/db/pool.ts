@@ -8,7 +8,12 @@ import { logger } from '../logger';
 // numeric(12,2) comes back as a string by default — parse to JS number.
 pg.types.setTypeParser(1700, (v) => (v == null ? null : Number(v)));
 
-export const pool = new pg.Pool({ connectionString: config.DATABASE_URL });
+export const pool = new pg.Pool({
+  connectionString: config.DATABASE_URL,
+  connectionTimeoutMillis: config.PG_CONNECT_TIMEOUT_MS,
+  idleTimeoutMillis: config.PG_IDLE_TIMEOUT_MS,
+  statement_timeout: config.PG_STATEMENT_TIMEOUT_MS,
+});
 pool.on('error', (err) => logger.error({ err }, 'pg pool error'));
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -62,7 +67,15 @@ function listMigrationFiles(): { dir: string; files: string[] } {
  */
 export async function migrate(): Promise<void> {
   const client = await pool.connect();
+  let migrationLockHeld = false;
   try {
+    // Schema/index upgrades can legitimately outlive the ordinary request SQL
+    // deadline. Keep them bounded, but give them a dedicated five-minute floor.
+    await client.query("select set_config('statement_timeout', $1, false)", [
+      String(Math.max(config.PG_STATEMENT_TIMEOUT_MS, 300_000)),
+    ]);
+    await client.query("select pg_advisory_lock(hashtext('arix:schema-migrations'))");
+    migrationLockHeld = true;
     await client.query(
       `create table if not exists schema_migrations (
          version text primary key,
@@ -92,6 +105,12 @@ export async function migrate(): Promise<void> {
       }
     }
   } finally {
+    if (migrationLockHeld) {
+      await client.query("select pg_advisory_unlock(hashtext('arix:schema-migrations'))").catch(() => {});
+    }
+    await client
+      .query("select set_config('statement_timeout', $1, false)", [String(config.PG_STATEMENT_TIMEOUT_MS)])
+      .catch(() => {});
     client.release();
   }
   logger.info('database schema ready');

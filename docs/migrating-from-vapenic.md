@@ -86,3 +86,9 @@ The onboarding wizard (`/setup`) only runs when no staff account exists yet,
 so an upgraded deployment with existing staff skips straight to the normal
 dashboard — it will not re-prompt for setup. Existing conversations, orders,
 and receipts are untouched by any of the above.
+
+Current Arix releases still require a `SETUP_TOKEN` (minimum 32 characters) at
+process startup, including upgraded installations whose bootstrap endpoint is
+already disabled by existing staff. Add an independently generated value
+(`openssl rand -hex 32`) to `.env`; existing administrators never need to
+enter it unless they intentionally start again with an empty staff table.

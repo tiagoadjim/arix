@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useRef, useState } from 'react';
+import Image from 'next/image';
 import { toast } from 'sonner';
 import QRCode from 'qrcode';
 import { CheckCircle2Icon } from 'lucide-react';
@@ -61,9 +62,10 @@ export function WhatsAppPanel({ onConnected }: WhatsAppPanelProps) {
   const [confirmForce, setConfirmForce] = useState(false);
   const notifiedRef = useRef(false);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (signal: AbortSignal) => {
     try {
-      const s = await api.whatsappStatus();
+      const s = await api.whatsappStatus(signal);
+      if (signal.aborted) return;
       setStatus(s);
 
       if (s.connected) {
@@ -77,13 +79,15 @@ export function WhatsAppPanel({ onConnected }: WhatsAppPanelProps) {
       notifiedRef.current = false;
 
       if (s.hasQr) {
-        const qrString = await api.qr();
+        const qrString = await api.qr(signal);
         const dataUrl = await QRCode.toDataURL(qrString, { margin: 1, width: 260 });
+        if (signal.aborted) return;
         setQrDataUrl(dataUrl);
       } else {
         setQrDataUrl(null);
       }
     } catch {
+      if (signal.aborted) return;
       // transient — keep the last known status/QR on screen
     }
   }, [onConnected]);
@@ -147,9 +151,12 @@ export function WhatsAppPanel({ onConnected }: WhatsAppPanelProps) {
       </CardHeader>
       <CardContent className="flex flex-col items-center gap-4">
         {qrDataUrl ? (
-          <img
+          <Image
             src={qrDataUrl}
             alt={t.settings.whatsapp.qrAlt}
+            width={224}
+            height={224}
+            unoptimized
             className="size-56 rounded-md border border-border bg-white p-2"
           />
         ) : (

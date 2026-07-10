@@ -1,6 +1,7 @@
 // DB row shapes (mirror of the server types / SQL schema).
 
 export type ConversationMode = 'bot' | 'human';
+export type StaffRole = 'admin' | 'agent';
 
 export interface Conversation {
   id: string;
@@ -31,9 +32,12 @@ export interface Message {
   body: string | null;
   media_url: string | null;
   media_mime: string | null;
-  send_status: 'pending' | 'sent' | 'failed' | null;
+  send_status: 'pending' | 'sending' | 'sent' | 'failed' | 'cancelled' | null;
   sent_by: string | null;
   error: string | null;
+  client_id: string | null;
+  send_lease_until: string | null;
+  send_attempts: number;
   created_at: string;
 }
 
@@ -41,6 +45,7 @@ export interface Agent {
   id: string;
   email: string;
   name: string | null;
+  role: StaffRole;
   created_at: string;
 }
 
@@ -79,6 +84,36 @@ export interface Receipt {
   woo_total: number | null;
   currency: string | null;
   match_status: 'match' | 'mismatch' | 'unreadable' | 'pending';
+  review_status: 'pending' | 'processing' | 'approved' | 'rejected';
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+  media_sha256: string | null;
+  transaction_reference: string | null;
+  review_attempt_id: string | null;
   note: string | null;
+  created_at: string;
+}
+
+export interface UsageSummaryRow {
+  day: string;
+  provider: string;
+  model: string;
+  requests: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  estimated_cost_usd: number;
+}
+
+export interface AuditEvent {
+  id: string;
+  account_id: string;
+  actor_id: string | null;
+  action: string;
+  target_type: string | null;
+  target_id: string | null;
+  request_id: string | null;
+  ip_hash: string | null;
+  metadata: Record<string, unknown>;
   created_at: string;
 }

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { AlertCircleIcon } from 'lucide-react';
 import { login, apiErrorMessage } from '@/lib/api';
@@ -19,6 +19,11 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [sessionExpired, setSessionExpired] = useState(false);
+
+  useEffect(() => {
+    setSessionExpired(new URLSearchParams(window.location.search).get('expired') === '1');
+  }, []);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -36,10 +41,11 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="grid min-h-screen place-items-center bg-background p-4">
+    <main id="main-content" tabIndex={-1} className="grid min-h-dvh place-items-center bg-background p-4 outline-none">
       <Card className="w-full max-w-sm">
         <CardHeader className="flex flex-col items-center gap-3 text-center">
           <Logo markClassName="h-8 w-8 text-primary" />
+          <h1 className="sr-only">{t.login.title}</h1>
           <p className="text-sm text-muted-foreground">{t.login.subtitle}</p>
         </CardHeader>
         <CardContent>
@@ -70,6 +76,11 @@ export default function LoginPage() {
             <Button type="submit" disabled={loading} className="mt-2">
               {loading ? t.login.submitting : t.login.submit}
             </Button>
+            {sessionExpired && !error && (
+              <Alert variant="warning">
+                <AlertDescription>{t.login.sessionExpired}</AlertDescription>
+              </Alert>
+            )}
             {error && (
               <Alert variant="destructive">
                 <AlertCircleIcon />
@@ -79,6 +90,6 @@ export default function LoginPage() {
           </form>
         </CardContent>
       </Card>
-    </div>
+    </main>
   );
 }

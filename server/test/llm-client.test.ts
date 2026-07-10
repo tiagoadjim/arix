@@ -94,6 +94,30 @@ describe('getLlm()', () => {
 });
 
 describe('chatComplete() retry behavior', () => {
+  it('propagates abort to the active SDK request and never retries it', async () => {
+    const controller = new AbortController();
+    const budgetError = new Error('turn budget exhausted');
+    create.mockImplementationOnce(
+      (_params: unknown, options?: { signal?: AbortSignal }) =>
+        new Promise((_resolve, reject) => {
+          options?.signal?.addEventListener('abort', () => reject(options.signal?.reason), {
+            once: true,
+          });
+        }),
+    );
+
+    const handle = await getLlm();
+    const pending = handle.chatComplete(
+      { model: 'x', messages: [] } as never,
+      { signal: controller.signal },
+    );
+    controller.abort(budgetError);
+
+    await expect(pending).rejects.toBe(budgetError);
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(create.mock.calls[0]?.[1]).toEqual({ signal: controller.signal });
+  });
+
   it('retries once on a 429 and succeeds on the 2nd attempt', async () => {
     const rateLimited = Object.assign(new Error('rate limited'), { status: 429 });
     create.mockRejectedValueOnce(rateLimited).mockResolvedValueOnce(okResponse());

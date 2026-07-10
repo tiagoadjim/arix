@@ -10,8 +10,19 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Switch } from '@/components/ui/switch';
 import { SecretInput } from './secret-input';
-import { compactUpdates, findDto, isReadOnly, numberValue, plainUpdate, secretUpdate, stringValue } from './settings-form-utils';
+import {
+  booleanValue,
+  compactUpdates,
+  findDto,
+  isReadOnly,
+  numberBounds,
+  numberValue,
+  plainUpdate,
+  secretUpdate,
+  stringValue,
+} from './settings-form-utils';
 
 export interface StoreFormValues {
   url: string;
@@ -23,6 +34,7 @@ export interface StoreFormValues {
   statusAfterDispatch: string;
   productLinkTemplate: string;
   tolerance: number;
+  autoConfirmPayment: boolean;
 }
 
 export function initStoreValues(wc: SettingDto[] | undefined, payment: SettingDto[] | undefined): StoreFormValues {
@@ -36,6 +48,7 @@ export function initStoreValues(wc: SettingDto[] | undefined, payment: SettingDt
     statusAfterDispatch: stringValue('wc.status_after_dispatch', wc),
     productLinkTemplate: stringValue('wc.product_link_template', wc, '{base}/producto/{slug}'),
     tolerance: numberValue('payment.tolerance', payment, 1),
+    autoConfirmPayment: booleanValue('payment.auto_confirm', payment, false),
   };
 }
 
@@ -54,6 +67,7 @@ export function buildStoreUpdates(
     plainUpdate('wc.status_after_dispatch', values.statusAfterDispatch, wc),
     plainUpdate('wc.product_link_template', values.productLinkTemplate, wc),
     plainUpdate('payment.tolerance', values.tolerance, payment),
+    plainUpdate('payment.auto_confirm', values.autoConfirmPayment, payment),
   ]);
 }
 
@@ -61,15 +75,17 @@ interface StoreFieldsProps {
   values: StoreFormValues;
   onChange: (values: StoreFormValues) => void;
   wc?: SettingDto[];
+  payment?: SettingDto[];
   disabled?: boolean;
 }
 
 /** WooCommerce connection fields + "Test connection" — shared verbatim
  * between the settings "Store" tab and setup-wizard step 4. */
-export function StoreFields({ values, onChange, wc, disabled }: StoreFieldsProps) {
+export function StoreFields({ values, onChange, wc, payment, disabled }: StoreFieldsProps) {
   const { t } = useT();
   const [testState, setTestState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [testError, setTestError] = useState<string | null>(null);
+  const toleranceBounds = numberBounds('payment.tolerance', payment, { min: 0 });
 
   function set<K extends keyof StoreFormValues>(key: K, value: StoreFormValues[K]) {
     onChange({ ...values, [key]: value });
@@ -79,10 +95,17 @@ export function StoreFields({ values, onChange, wc, disabled }: StoreFieldsProps
     setTestState('loading');
     setTestError(null);
     try {
+      const useStored =
+        !values.consumerKey.trim() &&
+        !values.consumerSecret.trim() &&
+        Boolean(findDto('wc.consumer_key', wc)?.set) &&
+        Boolean(findDto('wc.consumer_secret', wc)?.set) &&
+        values.url === stringValue('wc.url', wc);
       const result = await api.testWoo({
         url: values.url,
         consumerKey: values.consumerKey,
         consumerSecret: values.consumerSecret,
+        useStored,
       });
       if (result.ok) {
         setTestState('success');
@@ -204,15 +227,37 @@ export function StoreFields({ values, onChange, wc, disabled }: StoreFieldsProps
           <Input
             id="wc-tolerance"
             type="number"
-            min={0}
+            min={toleranceBounds.min}
+            max={toleranceBounds.max}
             step="any"
             value={values.tolerance}
             onChange={(e) => set('tolerance', Number(e.target.value))}
-            disabled={disabled}
+            disabled={disabled || isReadOnly('payment.tolerance', payment)}
           />
           <p className="text-xs text-muted-foreground">{t.settings.store.toleranceHint}</p>
         </div>
       </div>
+
+      <Alert variant={values.autoConfirmPayment ? 'destructive' : 'default'}>
+        <AlertDescription>
+          <Label className="flex items-start justify-between gap-4">
+            <span className="flex flex-col gap-1">
+              <span className="font-medium text-foreground">{t.settings.store.autoConfirmLabel}</span>
+              <span className="font-normal text-muted-foreground">
+                {values.autoConfirmPayment
+                  ? t.settings.store.autoConfirmEnabledHint
+                  : t.settings.store.autoConfirmDisabledHint}
+              </span>
+            </span>
+            <Switch
+              checked={values.autoConfirmPayment}
+              onCheckedChange={(value) => set('autoConfirmPayment', value)}
+              disabled={disabled || isReadOnly('payment.auto_confirm', payment)}
+              aria-label={t.settings.store.autoConfirmLabel}
+            />
+          </Label>
+        </AlertDescription>
+      </Alert>
 
       <div className="flex flex-col gap-2">
         <Button

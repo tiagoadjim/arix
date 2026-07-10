@@ -1,30 +1,25 @@
-import { createCipheriv, createDecipheriv, hkdfSync, randomBytes } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHash, hkdfSync, randomBytes } from 'node:crypto';
 import { config } from '../config';
 
 /**
- * Encrypts secrets stored in the `settings` table (llm.api_key, wc.consumer_key,
- * wc.consumer_secret) so a DB dump/backup doesn't leak plaintext credentials.
+ * Versioned AES-256-GCM envelopes for application secrets.
  *
- * Algorithm: AES-256-GCM. The key is derived via HKDF-SHA256 from
- * `AUTH_JWT_SECRET` (never stored) with a fixed salt/info, so no separate
- * encryption key needs to be provisioned or rotated independently.
- *
- * IMPORTANT: rotating AUTH_JWT_SECRET invalidates every secret encrypted under
- * the old key — decryptSecret() will throw for them. There is no migration
- * path for this (by design: the key is never persisted anywhere). Operators
- * who rotate AUTH_JWT_SECRET must re-enter LLM/WooCommerce credentials in the
- * dashboard afterward.
+ * v1 was derived directly from AUTH_JWT_SECRET. v2 uses the independent
+ * SETTINGS_ENCRYPTION_KEY and embeds a non-secret key id so a previous key can
+ * remain in a decryption keyring during rotation. Existing v1/plaintext rows
+ * remain readable and are lazily migrated by rotateStoredSecrets().
  */
 
 const ALGORITHM = 'aes-256-gcm';
-const IV_BYTES = 12; // 96-bit, the recommended nonce size for GCM
-const KEY_BYTES = 32; // AES-256
+const IV_BYTES = 12;
+const KEY_BYTES = 32;
 const HKDF_SALT = 'arix-settings';
-const HKDF_INFO = 'settings-encryption-v1';
-const ENVELOPE_PREFIX = 'enc:v1:';
+const V1_INFO = 'settings-encryption-v1';
+const V2_INFO = 'settings-encryption-v2';
+const V1_PREFIX = 'enc:v1:';
+const V2_PREFIX = 'enc:v2:';
+const B64URL_RE = /^[A-Za-z0-9_-]*$/;
 
-/** Raised when a stored secret can't be decrypted: malformed envelope, a
- * tampered ciphertext/tag, or AUTH_JWT_SECRET was rotated since encryption. */
 export class SecretDecryptionError extends Error {
   constructor(message: string) {
     super(message);
@@ -32,79 +27,129 @@ export class SecretDecryptionError extends Error {
   }
 }
 
-// Cache the derived key against the exact secret it was derived from, so a
-// runtime AUTH_JWT_SECRET change (e.g. in a test) transparently busts it —
-// no separate invalidation hook needed.
-let keyCache: { forSecret: string; key: Buffer } | null = null;
+interface KeyMaterial {
+  id: string;
+  key: Buffer;
+  source: string;
+}
 
-function derivedKey(): Buffer {
-  const secret = config.AUTH_JWT_SECRET;
-  if (keyCache && keyCache.forSecret === secret) return keyCache.key;
-  const key = Buffer.from(
+let keyringCache: { fingerprint: string; active: KeyMaterial; all: KeyMaterial[] } | null = null;
+
+function derive(secret: string, info: string): Buffer {
+  return Buffer.from(
     hkdfSync(
       'sha256',
       Buffer.from(secret, 'utf8'),
       Buffer.from(HKDF_SALT, 'utf8'),
-      Buffer.from(HKDF_INFO, 'utf8'),
+      Buffer.from(info, 'utf8'),
       KEY_BYTES,
     ),
   );
-  keyCache = { forSecret: secret, key };
-  return key;
 }
 
-/** True if `value` is in the `enc:v1:` encrypted-secret envelope format. */
-export function isEncrypted(value: string): boolean {
-  return value.startsWith(ENVELOPE_PREFIX);
+function keyId(secret: string): string {
+  return createHash('sha256').update(`arix:${secret}`).digest('base64url').slice(0, 12);
 }
 
-/**
- * Encrypt a secret for storage. Format:
- * `enc:v1:<iv_b64url>:<tag_b64url>:<ciphertext_b64url>`.
- */
-export function encryptSecret(plain: string): string {
+function configuredSecrets(): { active: string; previous: string[]; explicit: boolean } {
+  const explicit = config.SETTINGS_ENCRYPTION_KEY?.trim();
+  const previous = (config.SETTINGS_ENCRYPTION_KEY_PREVIOUS ?? '')
+    .split(',')
+    .map((value) => value.trim())
+    // A deployment may previously have used the supported JWT fallback,
+    // whose historical minimum is 16 chars. Previous keys are decrypt-only;
+    // the active independent key still requires 32+ in config.ts.
+    .filter((value) => value.length >= 16);
+  return {
+    active: explicit || config.AUTH_JWT_SECRET,
+    previous,
+    explicit: Boolean(explicit),
+  };
+}
+
+function keyring(): { active: KeyMaterial; all: KeyMaterial[] } {
+  const configured = configuredSecrets();
+  const fingerprint = JSON.stringify(configured);
+  if (keyringCache?.fingerprint === fingerprint) return keyringCache;
+  const secrets = [configured.active, ...configured.previous];
+  const all = secrets.map((secret, index) => ({
+    id: keyId(secret),
+    key: derive(secret, V2_INFO),
+    source: index === 0 ? (configured.explicit ? 'settings' : 'jwt-fallback') : 'previous',
+  }));
+  keyringCache = { fingerprint, active: all[0]!, all };
+  return keyringCache;
+}
+
+function decodeSegment(value: string, label: string): Buffer {
+  if (!value || !B64URL_RE.test(value)) {
+    throw new SecretDecryptionError(`malformed encrypted envelope (invalid ${label})`);
+  }
+  try {
+    return Buffer.from(value, 'base64url');
+  } catch {
+    throw new SecretDecryptionError(`malformed encrypted envelope (invalid ${label})`);
+  }
+}
+
+function encryptWith(key: Buffer, partsPrefix: string, plain: string): string {
   const iv = randomBytes(IV_BYTES);
-  const cipher = createCipheriv(ALGORITHM, derivedKey(), iv);
+  const cipher = createCipheriv(ALGORITHM, key, iv);
   const ciphertext = Buffer.concat([cipher.update(plain, 'utf8'), cipher.final()]);
   const tag = cipher.getAuthTag();
-  return `${ENVELOPE_PREFIX}${iv.toString('base64url')}:${tag.toString('base64url')}:${ciphertext.toString('base64url')}`;
+  return `${partsPrefix}${iv.toString('base64url')}:${tag.toString('base64url')}:${ciphertext.toString('base64url')}`;
 }
 
-/**
- * Decrypt a value produced by encryptSecret(). Values that don't carry the
- * `enc:v1:` prefix pass through unchanged — a secret hand-edited into the DB
- * as plaintext is tolerated, not rejected. Throws SecretDecryptionError when
- * the envelope is malformed or the GCM tag check fails (tampered ciphertext,
- * or the wrong key because AUTH_JWT_SECRET was rotated).
- */
+function decryptWith(key: Buffer, ivPart: string, tagPart: string, ctPart: string): string {
+  const iv = decodeSegment(ivPart, 'iv');
+  const tag = decodeSegment(tagPart, 'tag');
+  const ciphertext = ctPart === '' ? Buffer.alloc(0) : decodeSegment(ctPart, 'ciphertext');
+  if (iv.length !== IV_BYTES || tag.length !== 16) {
+    throw new SecretDecryptionError('malformed encrypted envelope (invalid iv/tag length)');
+  }
+  try {
+    const decipher = createDecipheriv(ALGORITHM, key, iv);
+    decipher.setAuthTag(tag);
+    return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString('utf8');
+  } catch {
+    throw new SecretDecryptionError('failed to decrypt secret — ciphertext/key mismatch or tampering');
+  }
+}
+
+export function isEncrypted(value: string): boolean {
+  return value.startsWith(V1_PREFIX) || value.startsWith(V2_PREFIX);
+}
+
+/** New writes always use the active v2 key. */
+export function encryptSecret(plain: string): string {
+  const active = keyring().active;
+  return encryptWith(active.key, `${V2_PREFIX}${active.id}:`, plain);
+}
+
 export function decryptSecret(stored: string): string {
   if (!isEncrypted(stored)) return stored;
 
-  const parts = stored.slice(ENVELOPE_PREFIX.length).split(':');
-  if (parts.length !== 3) {
-    throw new SecretDecryptionError('malformed enc:v1 envelope (expected iv:tag:ciphertext)');
-  }
-  const [ivPart, tagPart, ctPart] = parts as [string, string, string];
-
-  let iv: Buffer;
-  let tag: Buffer;
-  let ciphertext: Buffer;
-  try {
-    iv = Buffer.from(ivPart, 'base64url');
-    tag = Buffer.from(tagPart, 'base64url');
-    ciphertext = Buffer.from(ctPart, 'base64url');
-  } catch {
-    throw new SecretDecryptionError('malformed enc:v1 envelope (invalid base64url segment)');
+  if (stored.startsWith(V1_PREFIX)) {
+    const parts = stored.slice(V1_PREFIX.length).split(':');
+    if (parts.length !== 3) throw new SecretDecryptionError('malformed enc:v1 envelope');
+    const [iv, tag, ciphertext] = parts as [string, string, string];
+    return decryptWith(derive(config.AUTH_JWT_SECRET, V1_INFO), iv, tag, ciphertext);
   }
 
-  try {
-    const decipher = createDecipheriv(ALGORITHM, derivedKey(), iv);
-    decipher.setAuthTag(tag);
-    const plaintext = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
-    return plaintext.toString('utf8');
-  } catch {
-    throw new SecretDecryptionError(
-      'failed to decrypt secret — tampered ciphertext/tag, or AUTH_JWT_SECRET was rotated since it was encrypted',
-    );
-  }
+  const parts = stored.slice(V2_PREFIX.length).split(':');
+  if (parts.length !== 4) throw new SecretDecryptionError('malformed enc:v2 envelope');
+  const [id, iv, tag, ciphertext] = parts as [string, string, string, string];
+  const material = keyring().all.find((candidate) => candidate.id === id);
+  if (!material) throw new SecretDecryptionError(`no configured encryption key matches key id ${id}`);
+  return decryptWith(material.key, iv, tag, ciphertext);
+}
+
+/** True for plaintext, legacy v1, or v2 encrypted under a non-active key. */
+export function needsReencryption(stored: string): boolean {
+  const activePrefix = `${V2_PREFIX}${keyring().active.id}:`;
+  return !stored.startsWith(activePrefix);
+}
+
+export function usingIndependentEncryptionKey(): boolean {
+  return keyring().active.source === 'settings';
 }

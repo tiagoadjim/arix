@@ -4,7 +4,7 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { toast } from 'sonner';
 import { KeyRoundIcon, Trash2Icon } from 'lucide-react';
 import { api, apiErrorMessage } from '@/lib/api';
-import type { Agent } from '@/lib/types';
+import type { Agent, StaffRole } from '@/lib/types';
 import { interpolate } from '@/lib/i18n';
 import { useT } from '@/lib/i18n/provider';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -12,6 +12,7 @@ import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
   Dialog,
   DialogClose,
@@ -34,7 +35,9 @@ export function StaffPanel() {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [role, setRole] = useState<StaffRole>('agent');
   const [creating, setCreating] = useState(false);
+  const [roleBusy, setRoleBusy] = useState<Record<string, boolean>>({});
 
   const [deleteTarget, setDeleteTarget] = useState<Agent | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -64,16 +67,31 @@ export function StaffPanel() {
     }
     setCreating(true);
     try {
-      await api.createStaff({ name: name.trim(), email: email.trim(), password });
+      await api.createStaff({ name: name.trim(), email: email.trim(), password, role });
       setName('');
       setEmail('');
       setPassword('');
+      setRole('agent');
       toast.success(t.settings.staff.createdToast);
       await load();
     } catch (err) {
       toast.error(apiErrorMessage(err, t, t.common.error));
     } finally {
       setCreating(false);
+    }
+  }
+
+  async function handleRoleChange(agent: Agent, nextRole: StaffRole) {
+    if (agent.role === nextRole) return;
+    setRoleBusy((current) => ({ ...current, [agent.id]: true }));
+    try {
+      const updated = await api.updateStaffRole(agent.id, nextRole);
+      setAgents((current) => current?.map((item) => (item.id === agent.id ? updated : item)) ?? current);
+      toast.success(t.settings.staff.roleChangedToast);
+    } catch (error) {
+      toast.error(apiErrorMessage(error, t, t.common.error));
+    } finally {
+      setRoleBusy((current) => ({ ...current, [agent.id]: false }));
     }
   }
 
@@ -150,6 +168,18 @@ export function StaffPanel() {
                 required
               />
             </div>
+            <div className="flex min-w-40 flex-1 flex-col gap-1.5">
+              <Label htmlFor="staff-role">{t.settings.staff.roleLabel}</Label>
+              <Select value={role} onValueChange={(value) => setRole(value as StaffRole)} disabled={creating}>
+                <SelectTrigger id="staff-role">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="agent">{t.settings.staff.roleAgent}</SelectItem>
+                  <SelectItem value="admin">{t.settings.staff.roleAdmin}</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
             <Button type="submit" disabled={creating}>
               {creating ? t.settings.staff.creating : t.settings.staff.createButton}
             </Button>
@@ -175,7 +205,20 @@ export function StaffPanel() {
                 <p className="text-sm font-medium">{a.name || '—'}</p>
                 <p className="text-xs text-muted-foreground">{a.email}</p>
               </div>
-              <div className="flex gap-2">
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                <Select
+                  value={a.role}
+                  onValueChange={(value) => void handleRoleChange(a, value as StaffRole)}
+                  disabled={roleBusy[a.id]}
+                >
+                  <SelectTrigger size="sm" className="w-36" aria-label={`${t.settings.staff.roleLabel}: ${a.name || a.email}`}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="agent">{t.settings.staff.roleAgent}</SelectItem>
+                    <SelectItem value="admin">{t.settings.staff.roleAdmin}</SelectItem>
+                  </SelectContent>
+                </Select>
                 <Button
                   type="button"
                   variant="outline"

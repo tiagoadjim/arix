@@ -15,7 +15,17 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { SecretInput } from './secret-input';
-import { compactUpdates, findDto, isReadOnly, plainUpdate, secretUpdate, stringValue, booleanValue } from './settings-form-utils';
+import {
+  booleanValue,
+  compactUpdates,
+  findDto,
+  isReadOnly,
+  numberBounds,
+  numberValue,
+  plainUpdate,
+  secretUpdate,
+  stringValue,
+} from './settings-form-utils';
 
 export interface ProviderFormValues {
   provider: ProviderId;
@@ -25,6 +35,8 @@ export interface ProviderFormValues {
   reasoningSplit: boolean;
   thinkingDisabled: boolean;
   visionFallback: 'ask_details' | 'handoff';
+  inputCostPerMillion: number;
+  outputCostPerMillion: number;
 }
 
 export function initProviderValues(dtos: SettingDto[] | undefined): ProviderFormValues {
@@ -38,6 +50,8 @@ export function initProviderValues(dtos: SettingDto[] | undefined): ProviderForm
     reasoningSplit: booleanValue('llm.reasoning_split', dtos),
     thinkingDisabled: booleanValue('llm.thinking_disabled', dtos),
     visionFallback: visionFallbackRaw === 'handoff' ? 'handoff' : 'ask_details',
+    inputCostPerMillion: numberValue('llm.input_cost_per_million', dtos),
+    outputCostPerMillion: numberValue('llm.output_cost_per_million', dtos),
   };
 }
 
@@ -50,6 +64,8 @@ export function buildProviderUpdates(values: ProviderFormValues, dtos: SettingDt
     plainUpdate('llm.reasoning_split', values.reasoningSplit, dtos),
     plainUpdate('llm.thinking_disabled', values.thinkingDisabled, dtos),
     plainUpdate('llm.vision_fallback', values.visionFallback, dtos),
+    plainUpdate('llm.input_cost_per_million', values.inputCostPerMillion, dtos),
+    plainUpdate('llm.output_cost_per_million', values.outputCostPerMillion, dtos),
   ]);
 }
 
@@ -68,6 +84,8 @@ export function ProviderFields({ values, onChange, dtos, disabled }: ProviderFie
   const [testError, setTestError] = useState<string | null>(null);
 
   const meta = PROVIDERS[values.provider];
+  const inputCostBounds = numberBounds('llm.input_cost_per_million', dtos, { min: 0 });
+  const outputCostBounds = numberBounds('llm.output_cost_per_million', dtos, { min: 0 });
 
   function set<K extends keyof ProviderFormValues>(key: K, value: ProviderFormValues[K]) {
     onChange({ ...values, [key]: value });
@@ -77,11 +95,18 @@ export function ProviderFields({ values, onChange, dtos, disabled }: ProviderFie
     setTestState('loading');
     setTestError(null);
     try {
+      const useStored =
+        !values.apiKey.trim() &&
+        Boolean(findDto('llm.api_key', dtos)?.set) &&
+        values.provider === stringValue('llm.provider', dtos, 'minimax') &&
+        values.model === stringValue('llm.model', dtos) &&
+        values.baseUrl === stringValue('llm.base_url', dtos);
       const result = await api.testLlm({
         provider: values.provider,
         apiKey: values.apiKey,
         model: values.model || undefined,
         baseUrl: values.baseUrl || undefined,
+        useStored,
       });
       if (result.ok) {
         setTestState('success');
@@ -188,6 +213,41 @@ export function ProviderFields({ values, onChange, dtos, disabled }: ProviderFie
           disabled={disabled || isReadOnly('llm.base_url', dtos)}
         />
         <p className="text-xs text-muted-foreground">{t.settings.provider.baseUrlHint}</p>
+      </div>
+
+      <div className="flex flex-col gap-3 rounded-md border border-border p-3">
+        <div>
+          <p className="text-sm font-medium">{t.settings.provider.costTitle}</p>
+          <p className="text-xs text-muted-foreground">{t.settings.provider.costHint}</p>
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="llm-input-cost">{t.settings.provider.inputCostLabel}</Label>
+            <Input
+              id="llm-input-cost"
+              type="number"
+              min={inputCostBounds.min}
+              max={inputCostBounds.max}
+              step="any"
+              value={values.inputCostPerMillion}
+              onChange={(event) => set('inputCostPerMillion', Number(event.target.value))}
+              disabled={disabled || isReadOnly('llm.input_cost_per_million', dtos)}
+            />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="llm-output-cost">{t.settings.provider.outputCostLabel}</Label>
+            <Input
+              id="llm-output-cost"
+              type="number"
+              min={outputCostBounds.min}
+              max={outputCostBounds.max}
+              step="any"
+              value={values.outputCostPerMillion}
+              onChange={(event) => set('outputCostPerMillion', Number(event.target.value))}
+              disabled={disabled || isReadOnly('llm.output_cost_per_million', dtos)}
+            />
+          </div>
+        </div>
       </div>
 
       {meta.hasReasoningQuirks && (

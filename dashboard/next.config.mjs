@@ -6,7 +6,23 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const monorepoRoot = path.join(__dirname, '..');
 
 /** @type {import('next').NextConfig} */
-const SERVER_API_URL = process.env.SERVER_API_URL || 'http://localhost:3001';
+// Next's development runtime and React Refresh evaluate generated modules.
+// Permit that only for `next dev`; production keeps the stricter policy.
+const SCRIPT_SRC = process.env.NODE_ENV === 'production'
+  ? "script-src 'self' 'unsafe-inline'"
+  : "script-src 'self' 'unsafe-inline' 'unsafe-eval'";
+const CONTENT_SECURITY_POLICY = [
+  "default-src 'self'",
+  "base-uri 'self'",
+  "object-src 'none'",
+  "frame-ancestors 'none'",
+  "form-action 'self'",
+  "img-src 'self' data: blob:",
+  "font-src 'self' data:",
+  "style-src 'self' 'unsafe-inline'",
+  SCRIPT_SRC,
+  "connect-src 'self'",
+].join('; ');
 
 const nextConfig = {
   output: 'standalone',
@@ -25,9 +41,22 @@ const nextConfig = {
   outputFileTracingRoot: existsSync(path.join(monorepoRoot, 'pnpm-workspace.yaml'))
     ? monorepoRoot
     : __dirname,
-  async rewrites() {
-    // Proxy API calls to the server (same-origin in the browser → no CORS).
-    return [{ source: '/api/:path*', destination: `${SERVER_API_URL}/api/:path*` }];
+  async headers() {
+    return [
+      {
+        source: '/(.*)',
+        headers: [
+          {
+            key: 'Content-Security-Policy',
+            value: CONTENT_SECURITY_POLICY,
+          },
+          { key: 'X-Content-Type-Options', value: 'nosniff' },
+          { key: 'X-Frame-Options', value: 'DENY' },
+          { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+          { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=()' },
+        ],
+      },
+    ];
   },
 };
 

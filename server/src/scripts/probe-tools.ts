@@ -1,7 +1,7 @@
 import type OpenAI from 'openai';
 import { getLlm } from '../agent/llm/client';
 import { buildSystemPrompt } from '../agent/prompt';
-import { toolDefinitions } from '../agent/tools';
+import { getToolDefinitions } from '../agent/tools';
 import { businessProfile, complianceRules, hoursConfig, infoBlocks, woo, llm as resolveLlmSettings } from '../config/runtime';
 import type { ToolContext } from '../types';
 
@@ -36,12 +36,13 @@ async function ask(
   messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
   label: string,
   extra: Record<string, unknown>,
+  tools: OpenAI.Chat.Completions.ChatCompletionTool[],
 ): Promise<void> {
   const body: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming &
     Record<string, unknown> = {
     model,
     messages,
-    tools: toolDefinitions,
+    tools: tools.length > 0 ? tools : undefined,
     temperature: 0.4,
     max_tokens: 4096, // match runAgent so inline <think> isn't truncated before the tool call
     ...extra,
@@ -90,20 +91,22 @@ async function main(): Promise<void> {
     { role: 'user', content: '¿qué tienen en stock?' },
   ];
 
+  const toolDefinitions = await getToolDefinitions();
+
   // reasoning_split is a MiniMax-specific quirk (see agent/llm/providers.ts);
   // only meaningful when that's the configured provider.
   if (handle.provider.id === 'minimax') {
     // The fix: no reasoning_split → expect a search_catalog tool_call.
-    await ask(handle.chatComplete, handle.model, messages, 'reasoning_split OFF (fix)', {});
+    await ask(handle.chatComplete, handle.model, messages, 'reasoning_split OFF (fix)', {}, toolDefinitions);
     // The regression: reasoning_split on → expect degradation / no tool_call.
     await ask(handle.chatComplete, handle.model, messages, 'reasoning_split ON (regression)', {
       reasoning_split: true,
-    });
+    }, toolDefinitions);
   } else {
     console.log(
       `\n[reasoning_split] skipped — MiniMax-specific quirk, not applicable to "${handle.provider.id}"`,
     );
-    await ask(handle.chatComplete, handle.model, messages, 'baseline (no extra params)', {});
+    await ask(handle.chatComplete, handle.model, messages, 'baseline (no extra params)', {}, toolDefinitions);
   }
 
   // Does the provider honor a forced function choice? Decides the
@@ -111,7 +114,7 @@ async function main(): Promise<void> {
   if (handle.provider.supportsForcedToolChoice) {
     await ask(handle.chatComplete, handle.model, messages, 'tool_choice forced to search_catalog', {
       tool_choice: { type: 'function', function: { name: 'search_catalog' } },
-    });
+    }, toolDefinitions);
   } else {
     console.log(
       `\n[tool_choice forced] skipped — provider.supportsForcedToolChoice is false for "${handle.provider.id}"; runAgent relies on the nudge alone`,

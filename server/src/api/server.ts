@@ -12,9 +12,12 @@ import {
   dispatchTemplate,
   invalidate as invalidateSettings,
   getResolvedWithMeta,
+  getResolved,
   envLockedKeys,
   setupCompleted,
   businessProfile,
+  enabledSkills,
+  mcpServers,
 } from '../config/runtime';
 import { encryptSecret } from '../config/secret';
 import { PROVIDERS, type ProviderSpec } from '../agent/llm/providers';
@@ -25,6 +28,20 @@ import {
   coerceForStorage,
   isNoOpSecretUpdate,
 } from './settings-dto';
+import { buildSkillCatalog } from '../skills/registry';
+import { isValidEnabledSkills } from '../skills/ids';
+import {
+  invalidateMcpPool,
+  listConnectedServerIds,
+  listMcpTools,
+  testMcpServer,
+} from '../mcp/manager';
+import {
+  mergeMcpServers,
+  toMcpServerDto,
+  validateMcpServersInput,
+} from '../mcp/types';
+import { assertSafeMcpUrl } from '../mcp/network';
 import {
   orderForStaff,
   STATUS_ES,
@@ -35,6 +52,22 @@ import { SESSION_COOKIE, signSession, verifySession, type SessionUser } from './
 import type { WhatsAppGateway } from '../whatsapp/socket';
 
 type ChatCompletionCreateParamsNonStreaming = OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming;
+
+const MCP_TEST_LIMIT = 5;
+const MCP_TEST_WINDOW_MS = 60_000;
+const mcpTestAttempts = new Map<string, { count: number; resetAt: number }>();
+
+function consumeMcpTestAttempt(userId: string): boolean {
+  const now = Date.now();
+  const current = mcpTestAttempts.get(userId);
+  if (!current || current.resetAt <= now) {
+    mcpTestAttempts.set(userId, { count: 1, resetAt: now + MCP_TEST_WINDOW_MS });
+    return true;
+  }
+  if (current.count >= MCP_TEST_LIMIT) return false;
+  current.count += 1;
+  return true;
+}
 
 /** {connected, hasQr} — the one shape /health, /api/setup/status and
  * /api/whatsapp/status all report the gateway's pairing state in. */
@@ -173,7 +206,7 @@ export function createApiServer(deps: { gateway: WhatsAppGateway }) {
         path: '/',
         maxAge: 7 * 24 * 3600 * 1000,
       });
-      res.json({ id: staff.id, email: staff.email, name: staff.name });
+      res.json({ id: staff.id, email: staff.email, name: staff.name, role: staff.role });
     }),
   );
 
@@ -208,7 +241,7 @@ export function createApiServer(deps: { gateway: WhatsAppGateway }) {
         path: '/',
         maxAge: 7 * 24 * 3600 * 1000,
       });
-      res.json({ id: staff.id, email: staff.email, name: staff.name });
+      res.json({ id: staff.id, email: staff.email, name: staff.name, role: staff.role });
     }),
   );
 
@@ -222,14 +255,29 @@ export function createApiServer(deps: { gateway: WhatsAppGateway }) {
     const token = req.cookies?.[SESSION_COOKIE];
     const user = token ? await verifySession(token) : null;
     // Re-validate against the DB so a deleted/disabled staff member is revoked
-    // immediately (the JWT alone would stay valid until expiry).
-    if (!user || !(await repo.getStaffById(user.id))) {
+    // immediately (the JWT alone would stay valid until expiry). Use the DB
+    // role rather than the JWT claim so role changes take effect immediately.
+    const staff = user ? await repo.getStaffById(user.id) : null;
+    if (!user || !staff) {
       res.status(401).json({ error: 'unauthorized' });
       return;
     }
-    req.user = user;
+    req.user = {
+      id: staff.id,
+      email: staff.email,
+      name: staff.name ?? undefined,
+      role: staff.role,
+    };
     next();
   });
+
+  const requireAdmin: RequestHandler = (req, res, next) => {
+    if ((req as AuthedRequest).user?.role !== 'admin') {
+      res.status(403).json({ error: 'admin_required' });
+      return;
+    }
+    next();
+  };
 
   app.get('/api/me', requireAuth, (req, res) => {
     res.json((req as AuthedRequest).user);
@@ -237,7 +285,7 @@ export function createApiServer(deps: { gateway: WhatsAppGateway }) {
 
   // WhatsApp pairing QR — AUTH REQUIRED (the QR is credential-equivalent).
   // For first-time setup, scan it from the server logs instead.
-  app.get('/api/qr', requireAuth, (_req, res) => {
+  app.get('/api/qr', requireAuth, requireAdmin, (_req, res) => {
     res
       .type('text/plain; charset=utf-8')
       .send(deps.gateway.latestQR ?? (deps.gateway.connected ? 'connected' : 'no QR yet — check logs'));
@@ -247,6 +295,7 @@ export function createApiServer(deps: { gateway: WhatsAppGateway }) {
   app.post(
     '/api/setup/test/llm',
     requireAuth,
+    requireAdmin,
     ah(async (req, res) => {
       const providerId = String(req.body?.provider ?? '');
       const provider = (PROVIDERS as Record<string, ProviderSpec>)[providerId];
@@ -286,6 +335,7 @@ export function createApiServer(deps: { gateway: WhatsAppGateway }) {
   app.post(
     '/api/setup/test/woocommerce',
     requireAuth,
+    requireAdmin,
     ah(async (req, res) => {
       const rawUrl = String(req.body?.url ?? '').trim().replace(/\/$/, '');
       const consumerKey = String(req.body?.consumerKey ?? '').trim();
@@ -332,13 +382,14 @@ export function createApiServer(deps: { gateway: WhatsAppGateway }) {
   );
 
   // ---- WhatsApp pairing status + manual restart (auth) ----
-  app.get('/api/whatsapp/status', requireAuth, (_req, res) => {
+  app.get('/api/whatsapp/status', requireAuth, requireAdmin, (_req, res) => {
     res.json(whatsappStatus(deps.gateway));
   });
 
   app.post(
     '/api/whatsapp/restart',
     requireAuth,
+    requireAdmin,
     ah(async (req, res) => {
       const force = req.body?.force === true;
       const wasConnected = deps.gateway.connected;
@@ -360,6 +411,7 @@ export function createApiServer(deps: { gateway: WhatsAppGateway }) {
   app.post(
     '/api/setup/complete',
     requireAuth,
+    requireAdmin,
     ah(async (_req, res) => {
       await repo.upsertSetting('setup.completed', 'true');
       invalidateSettings();
@@ -466,6 +518,7 @@ export function createApiServer(deps: { gateway: WhatsAppGateway }) {
   app.get(
     '/api/settings',
     requireAuth,
+    requireAdmin,
     ah(async (_req, res) => {
       const meta = await getResolvedWithMeta();
       res.json(buildSettingsDto(meta));
@@ -474,6 +527,7 @@ export function createApiServer(deps: { gateway: WhatsAppGateway }) {
   app.put(
     '/api/settings',
     requireAuth,
+    requireAdmin,
     ah(async (req, res) => {
       // Accepts both the new batch shape ({ updates: [...] }) and the legacy
       // single shape ({ key, value }) — the pre-Phase-7 dashboard config page
@@ -491,6 +545,29 @@ export function createApiServer(deps: { gateway: WhatsAppGateway }) {
         });
         return;
       }
+      const mcpInput = validated.updates.find(({ entry }) => entry.key === 'mcp.servers');
+      if (mcpInput) {
+        const checked = validateMcpServersInput(mcpInput.raw);
+        if (!checked.ok) {
+          res.status(400).json({ error: 'invalid_mcp_config', details: checked.errors });
+          return;
+        }
+        try {
+          await Promise.all(checked.servers.map((server) => assertSafeMcpUrl(server.url)));
+        } catch {
+          res.status(400).json({ error: 'unsafe_mcp_url' });
+          return;
+        }
+      }
+      const skillsInput = validated.updates.find(({ entry }) => entry.key === 'skills.enabled');
+      if (skillsInput && !isValidEnabledSkills(skillsInput.raw)) {
+        res.status(400).json({ error: 'invalid_skills_config' });
+        return;
+      }
+      // Snapshot current values before writing so mcp.servers can merge
+      // blank env/header fields as "keep current" (see coerceForStorage).
+      const previous = await getResolved();
+      let touchedMcp = false;
       try {
         await Promise.all(
           validated.updates
@@ -499,7 +576,8 @@ export function createApiServer(deps: { gateway: WhatsAppGateway }) {
             // blank, and never treat it as an error (see isNoOpSecretUpdate).
             .filter(({ entry, raw }) => !isNoOpSecretUpdate(entry, raw))
             .map(({ entry, raw }) => {
-              const stored = coerceForStorage(entry, raw);
+              if (entry.key === 'mcp.servers') touchedMcp = true;
+              const stored = coerceForStorage(entry, raw, previous[entry.key]);
               return repo.upsertSetting(entry.key, entry.secret ? encryptSecret(stored) : stored);
             }),
         );
@@ -508,8 +586,70 @@ export function createApiServer(deps: { gateway: WhatsAppGateway }) {
         // cancel the writes that already started, so the cache must never
         // stay stale relative to whatever did land.
         invalidateSettings();
+        if (touchedMcp) invalidateMcpPool();
       }
       res.json({ ok: true });
+    }),
+  );
+
+  // ---- skills catalog (built-in, with enable flags) ----
+  app.get(
+    '/api/skills',
+    requireAuth,
+    requireAdmin,
+    ah(async (_req, res) => {
+      const enabled = await enabledSkills();
+      res.json({ skills: buildSkillCatalog(enabled) });
+    }),
+  );
+
+  // ---- MCP servers: status + live tools + connection test ----
+  app.get(
+    '/api/mcp',
+    requireAuth,
+    requireAdmin,
+    ah(async (_req, res) => {
+      const [servers, connectedIds, tools] = await Promise.all([
+        mcpServers(),
+        listConnectedServerIds(),
+        listMcpTools(),
+      ]);
+      const connected = new Set(connectedIds);
+      res.json({
+        servers: servers.map((s) => ({
+          ...toMcpServerDto(s),
+          connected: connected.has(s.id),
+        })),
+        tools,
+      });
+    }),
+  );
+
+  app.post(
+    '/api/mcp/test',
+    requireAuth,
+    requireAdmin,
+    ah(async (req, res) => {
+      if (!consumeMcpTestAttempt(req.user!.id)) {
+        res.status(429).json({ ok: false, error: 'too_many_attempts' });
+        return;
+      }
+      const checked = validateMcpServersInput([req.body]);
+      if (!checked.ok) {
+        res.status(400).json({ ok: false, error: 'invalid_mcp_config' });
+        return;
+      }
+      const posted = checked.servers[0]!;
+      const previous = await mcpServers();
+      const cfg = mergeMcpServers([posted], previous)[0]!;
+      try {
+        await assertSafeMcpUrl(cfg.url);
+      } catch {
+        res.status(400).json({ ok: false, error: 'unsafe_mcp_url' });
+        return;
+      }
+      const result = await testMcpServer(cfg);
+      res.json(result);
     }),
   );
 
@@ -517,6 +657,7 @@ export function createApiServer(deps: { gateway: WhatsAppGateway }) {
   app.get(
     '/api/staff',
     requireAuth,
+    requireAdmin,
     ah(async (_req, res) => {
       res.json(await repo.listStaff());
     }),
@@ -525,6 +666,7 @@ export function createApiServer(deps: { gateway: WhatsAppGateway }) {
   app.post(
     '/api/staff',
     requireAuth,
+    requireAdmin,
     ah(async (req, res) => {
       const name = String(req.body?.name ?? '').trim() || null;
       const email = String(req.body?.email ?? '').trim().toLowerCase();
@@ -547,13 +689,14 @@ export function createApiServer(deps: { gateway: WhatsAppGateway }) {
         res.status(409).json({ error: 'staff_exists' });
         return;
       }
-      res.status(201).json({ id: staff.id, email: staff.email, name: staff.name });
+      res.status(201).json({ id: staff.id, email: staff.email, name: staff.name, role: staff.role });
     }),
   );
 
   app.delete(
     '/api/staff/:id',
     requireAuth,
+    requireAdmin,
     ah(async (req, res) => {
       const id = req.params.id as string;
       const user = req.user!;
@@ -577,6 +720,7 @@ export function createApiServer(deps: { gateway: WhatsAppGateway }) {
   app.post(
     '/api/staff/:id/password',
     requireAuth,
+    requireAdmin,
     ah(async (req, res) => {
       const id = req.params.id as string;
       const password = String(req.body?.password ?? '');

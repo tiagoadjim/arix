@@ -9,10 +9,16 @@ export interface SessionUser {
   id: string;
   email: string;
   name?: string;
+  role: 'admin' | 'staff';
 }
 
-export async function signSession(staff: { id: string; email: string; name: string | null }): Promise<string> {
-  return new SignJWT({ email: staff.email, name: staff.name ?? undefined })
+export async function signSession(staff: {
+  id: string;
+  email: string;
+  name: string | null;
+  role: 'admin' | 'staff';
+}): Promise<string> {
+  return new SignJWT({ email: staff.email, name: staff.name ?? undefined, role: staff.role })
     .setProtectedHeader({ alg: 'HS256' })
     .setSubject(staff.id)
     .setIssuedAt()
@@ -28,6 +34,7 @@ export async function verifySession(token: string): Promise<SessionUser | null> 
       id: String(payload.sub),
       email: String(payload.email ?? ''),
       name: typeof payload.name === 'string' ? payload.name : undefined,
+      role: payload.role === 'admin' ? 'admin' : 'staff',
     };
   } catch {
     return null;

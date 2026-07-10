@@ -1,6 +1,19 @@
-import { describe, it, expect } from 'vitest';
-import { toolNames, runTool } from '../src/agent/tools';
+import { describe, it, expect, vi } from 'vitest';
+import { getBuiltinToolNames, runTool } from '../src/agent/tools';
 import type { ToolContext } from '../src/types';
+
+vi.mock('../src/mcp/manager', () => ({
+  getMcpToolDefinitions: async () => [],
+  runMcpTool: async () => null,
+}));
+
+vi.mock('../src/config/runtime', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/config/runtime')>();
+  return {
+    ...actual,
+    enabledSkills: async () => ['catalog', 'orders', 'payments', 'handoff'],
+  };
+});
 
 const ctx: ToolContext = {
   conversationId: 'c1',
@@ -11,8 +24,8 @@ const ctx: ToolContext = {
 };
 
 describe('tool registry', () => {
-  it('exposes the agent’s skills', () => {
-    expect(toolNames).toEqual(
+  it('exposes the agent’s skills', async () => {
+    expect(await getBuiltinToolNames()).toEqual(
       expect.arrayContaining([
         'search_catalog',
         'view_product',

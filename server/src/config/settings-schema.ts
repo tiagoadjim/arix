@@ -263,6 +263,31 @@ export const SETTINGS_SCHEMA: readonly SettingDefinition[] = [
     label: 'Extra compliance text injected into the system prompt',
   },
 
+  // ---- Skills + MCP ------------------------------------------------------------
+  {
+    key: 'skills.enabled',
+    group: 'skills',
+    type: 'json',
+    // Default is every built-in skill — see skills/registry.ts. Stored as a
+    // JSON string array of skill ids (e.g. ["catalog","orders","payments","handoff"]).
+    default: ['catalog', 'orders', 'payments', 'handoff'],
+    seedEnv: 'SKILLS_ENABLED',
+    label: 'Enabled built-in agent skills',
+  },
+  {
+    key: 'mcp.servers',
+    group: 'mcp',
+    type: 'json',
+    // Encrypt the entire blob at rest because HTTP headers commonly contain
+    // bearer tokens/API keys. The dashboard receives a custom redacted DTO.
+    secret: true,
+    // Array of McpServerConfig (see mcp/types.ts). Empty by default — operators
+    // add servers from the dashboard / setup wizard.
+    default: [] as unknown[],
+    seedEnv: 'MCP_SERVERS',
+    label: 'MCP (Model Context Protocol) servers',
+  },
+
   // ---- Onboarding --------------------------------------------------------------
   {
     key: 'setup.completed',

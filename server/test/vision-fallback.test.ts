@@ -34,7 +34,11 @@ vi.mock('../src/agent/llm/client', () => {
   };
 });
 
-vi.mock('../src/agent/tools', () => ({ toolDefinitions: [], toolNames: [], runTool }));
+vi.mock('../src/agent/tools', () => ({
+  getToolDefinitions: async () => [],
+  getBuiltinToolNames: async () => [],
+  runTool,
+}));
 
 // `llm.vision_fallback` has no env seed (settings-schema.ts) — the only way
 // to reach 'handoff' is a DB row, so mock runtime.ts directly to control it

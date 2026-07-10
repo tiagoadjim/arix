@@ -155,7 +155,49 @@ export interface SettingsUpdate {
   value: unknown;
 }
 
+export interface SkillCatalogEntry {
+  id: string;
+  label: string;
+  description: string;
+  toolNames: string[];
+  enabled: boolean;
+}
+
+export interface McpServerDto {
+  id: string;
+  name: string;
+  enabled: boolean;
+  transport: 'http';
+  url: string;
+  headerKeys: string[];
+  allowedTools: string[];
+  allowMutatingTools: boolean;
+  connected?: boolean;
+}
+
+export interface McpToolInfo {
+  serverId: string;
+  name: string;
+  namespacedName: string;
+  description?: string;
+  readOnly: boolean;
+}
+
+export interface TestMcpResult {
+  ok: boolean;
+  error?: string;
+  tools?: McpToolInfo[];
+}
+
+export interface SessionUser {
+  id: string;
+  email: string;
+  name?: string;
+  role: 'admin' | 'staff';
+}
+
 export const api = {
+  me: () => jget<SessionUser>('/api/me'),
   logout: () => jpost('/api/auth/logout'),
   conversations: () => jget<Conversation[]>('/api/conversations'),
   conversation: (id: string) =>
@@ -185,10 +227,15 @@ export const api = {
   settingsGrouped: () => jget<Record<string, SettingDto[]>>('/api/settings'),
   saveSettings: (updates: SettingsUpdate[]) => jput<{ ok: boolean }>('/api/settings', { updates }),
 
+  // ---- skills + MCP ----
+  skills: () => jget<{ skills: SkillCatalogEntry[] }>('/api/skills'),
+  mcpStatus: () => jget<{ servers: McpServerDto[]; tools: McpToolInfo[] }>('/api/mcp'),
+  testMcp: (body: unknown) => jpostLenient<TestMcpResult>('/api/mcp/test', body),
+
   // ---- agentes (staff) ----
   staff: () => jget<Agent[]>('/api/staff'),
   createStaff: (body: { name: string; email: string; password: string }) =>
-    jpost<{ id: string; email: string; name: string | null }>('/api/staff', body),
+    jpost<{ id: string; email: string; name: string | null; role: 'staff' }>('/api/staff', body),
   deleteStaff: (id: string) => jdelete<{ ok: boolean }>(`/api/staff/${id}`),
   resetStaffPassword: (id: string, password: string) => jpost<{ ok: boolean }>(`/api/staff/${id}/password`, { password }),
 

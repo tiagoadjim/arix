@@ -37,13 +37,25 @@ vi.mock('openai', () => ({ default: OpenAIMock }));
 import { createApiServer } from '../src/api/server';
 import { signSession, SESSION_COOKIE } from '../src/api/auth';
 import { invalidate } from '../src/config/runtime';
-import { encryptSecret } from '../src/config/secret';
+import { decryptSecret, encryptSecret } from '../src/config/secret';
 import type { WhatsAppGateway } from '../src/whatsapp/socket';
 
-const STAFF = { id: 'staff-1', email: 'admin@example.com', password_hash: 'x', name: 'Admin' };
+const STAFF = {
+  id: 'staff-1',
+  email: 'admin@example.com',
+  password_hash: 'x',
+  name: 'Admin',
+  role: 'admin' as const,
+};
+const REGULAR_STAFF = { ...STAFF, id: 'staff-2', email: 'staff@example.com', role: 'staff' as const };
 
 async function authCookie(): Promise<string> {
   const token = await signSession(STAFF);
+  return `${SESSION_COOKIE}=${token}`;
+}
+
+async function regularStaffCookie(): Promise<string> {
+  const token = await signSession(REGULAR_STAFF);
   return `${SESSION_COOKIE}=${token}`;
 }
 
@@ -164,7 +176,7 @@ describe('POST /api/setup/admin', () => {
       .post('/api/setup/admin')
       .send({ name: 'Admin', email: 'admin@example.com', password: 'longenough' });
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ id: STAFF.id, email: STAFF.email, name: STAFF.name });
+    expect(res.body).toEqual({ id: STAFF.id, email: STAFF.email, name: STAFF.name, role: 'admin' });
     expect(res.headers['set-cookie']?.[0]).toMatch(new RegExp(`^${SESSION_COOKIE}=`));
   });
 
@@ -397,6 +409,14 @@ describe('GET /api/settings', () => {
     expect(res.status).toBe(401);
   });
 
+  it('requires an administrator role', async () => {
+    getStaffById.mockResolvedValue(REGULAR_STAFF);
+    const app = createApiServer({ gateway: fakeGateway() });
+    const res = await request(app).get('/api/settings').set('Cookie', await regularStaffCookie());
+    expect(res.status).toBe(403);
+    expect(res.body).toEqual({ error: 'admin_required' });
+  });
+
   it('never leaks a DB-sourced secret in plaintext, anywhere in the response', async () => {
     await withEnv({ LLM_API_KEY: undefined }, async () => {
       getSettings.mockResolvedValue({ 'llm.api_key': encryptSecret('sk-must-not-leak') });
@@ -434,6 +454,24 @@ describe('GET /api/settings', () => {
   });
 });
 
+describe('administrative authorization', () => {
+  it('blocks regular staff from setup and WhatsApp control endpoints', async () => {
+    getStaffById.mockResolvedValue(REGULAR_STAFF);
+    const app = createApiServer({ gateway: fakeGateway() });
+    const cookie = await regularStaffCookie();
+    const [qr, status, complete] = await Promise.all([
+      request(app).get('/api/qr').set('Cookie', cookie),
+      request(app).get('/api/whatsapp/status').set('Cookie', cookie),
+      request(app).post('/api/setup/complete').set('Cookie', cookie),
+    ]);
+    for (const response of [qr, status, complete]) {
+      expect(response.status).toBe(403);
+      expect(response.body).toEqual({ error: 'admin_required' });
+    }
+    expect(upsertSetting).not.toHaveBeenCalled();
+  });
+});
+
 describe('PUT /api/settings', () => {
   it('requires authentication', async () => {
     const app = createApiServer({ gateway: fakeGateway() });
@@ -465,6 +503,65 @@ describe('PUT /api/settings', () => {
     expect(res.status).toBe(200);
     expect(upsertSetting).toHaveBeenCalledWith('business.name', 'Acme');
     expect(upsertSetting).toHaveBeenCalledWith('agent.language', 'en');
+  });
+
+  it('encrypts MCP headers at rest', async () => {
+    await withEnv({ MCP_SERVERS: undefined }, async () => {
+      const app = createApiServer({ gateway: fakeGateway() });
+      const value = [
+        {
+          id: 'remote',
+          name: 'Remote',
+          enabled: true,
+          transport: 'http',
+          url: 'https://8.8.8.8/mcp',
+          headers: { Authorization: 'Bearer secret-token' },
+          allowedTools: [],
+        },
+      ];
+      const res = await request(app)
+        .put('/api/settings')
+        .set('Cookie', await authCookie())
+        .send({ key: 'mcp.servers', value });
+      expect(res.status).toBe(200);
+      const stored = upsertSetting.mock.calls.find((call) => call[0] === 'mcp.servers')?.[1] as string;
+      expect(stored).toMatch(/^enc:v1:/);
+      expect(stored).not.toContain('secret-token');
+      expect(decryptSecret(stored)).toContain('secret-token');
+    });
+  });
+
+  it('rejects stdio MCP and private-network URLs', async () => {
+    await withEnv({ MCP_SERVERS: undefined }, async () => {
+      const app = createApiServer({ gateway: fakeGateway() });
+      const stdio = await request(app)
+        .put('/api/settings')
+        .set('Cookie', await authCookie())
+        .send({
+          key: 'mcp.servers',
+          value: [{ id: 'local', transport: 'stdio', command: '/bin/sh', args: ['-c', 'id'] }],
+        });
+      expect(stdio.status).toBe(400);
+      expect(stdio.body.error).toBe('invalid_mcp_config');
+
+      const privateUrl = await request(app)
+        .put('/api/settings')
+        .set('Cookie', await authCookie())
+        .send({
+          key: 'mcp.servers',
+          value: [
+            {
+              id: 'metadata',
+              transport: 'http',
+              url: 'https://169.254.169.254/latest',
+              allowedTools: [],
+            },
+          ],
+        });
+      expect(privateUrl.status).toBe(400);
+      expect(privateUrl.body.error).toBe('unsafe_mcp_url');
+      expect(upsertSetting).not.toHaveBeenCalledWith('mcp.servers', expect.anything());
+    });
   });
 
   it('encrypts a secret value before storing it (once its env seed is not set)', async () => {
@@ -571,14 +668,20 @@ describe('POST /api/staff', () => {
   });
 
   it('creates a staff member and returns 201 with the staff DTO', async () => {
-    createStaffStrict.mockResolvedValue({ id: 'staff-2', email: 'new@example.com', name: 'New', password_hash: 'x' });
+    createStaffStrict.mockResolvedValue({
+      id: 'staff-2',
+      email: 'new@example.com',
+      name: 'New',
+      password_hash: 'x',
+      role: 'staff',
+    });
     const app = createApiServer({ gateway: fakeGateway() });
     const res = await request(app)
       .post('/api/staff')
       .set('Cookie', await authCookie())
       .send({ name: 'New', email: 'new@example.com', password: 'longenough' });
     expect(res.status).toBe(201);
-    expect(res.body).toEqual({ id: 'staff-2', email: 'new@example.com', name: 'New' });
+    expect(res.body).toEqual({ id: 'staff-2', email: 'new@example.com', name: 'New', role: 'staff' });
   });
 
   it('returns 409 with {error: "staff_exists"} on a duplicate email, and leaves the original row untouched', async () => {

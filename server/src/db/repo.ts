@@ -18,6 +18,7 @@ export interface Staff {
   email: string;
   password_hash: string;
   name: string | null;
+  role: 'admin' | 'staff';
 }
 
 /** Staff row safe to expose to the dashboard (no password hash). */
@@ -25,6 +26,7 @@ export interface StaffSummary {
   id: string;
   email: string;
   name: string | null;
+  role: 'admin' | 'staff';
   created_at: string;
 }
 
@@ -255,13 +257,13 @@ export async function getReceipts(conversationId: string): Promise<Receipt[]> {
 // ---- Staff (auth) -----------------------------------------------------------
 
 export async function getStaffByEmail(email: string): Promise<Staff | null> {
-  return one<Staff>('select id, email, password_hash, name from staff where lower(email) = lower($1)', [
+  return one<Staff>('select id, email, password_hash, name, role from staff where lower(email) = lower($1)', [
     email,
   ]);
 }
 
 export async function getStaffById(id: string): Promise<Staff | null> {
-  return one<Staff>('select id, email, password_hash, name from staff where id = $1', [id]);
+  return one<Staff>('select id, email, password_hash, name, role from staff where id = $1', [id]);
 }
 
 export async function setConversationEmail(id: string, email: string): Promise<void> {
@@ -290,9 +292,9 @@ export async function upsertSetting(key: string, value: string): Promise<void> {
 
 export async function createStaff(email: string, passwordHash: string, name: string | null): Promise<Staff> {
   const row = await one<Staff>(
-    `insert into staff (email, password_hash, name) values ($1, $2, $3)
+    `insert into staff (email, password_hash, name, role) values ($1, $2, $3, 'admin')
      on conflict (email) do update set password_hash = excluded.password_hash, name = excluded.name
-     returning id, email, password_hash, name`,
+     returning id, email, password_hash, name, role`,
     [email, passwordHash, name],
   );
   if (!row) throw new Error('failed to create staff');
@@ -313,15 +315,15 @@ export async function createStaffStrict(
   name: string | null,
 ): Promise<Staff | null> {
   return one<Staff>(
-    `insert into staff (email, password_hash, name) values ($1, $2, $3)
+    `insert into staff (email, password_hash, name, role) values ($1, $2, $3, 'staff')
      on conflict (email) do nothing
-     returning id, email, password_hash, name`,
+     returning id, email, password_hash, name, role`,
     [email, passwordHash, name],
   );
 }
 
 export async function listStaff(): Promise<StaffSummary[]> {
-  return many<StaffSummary>('select id, email, name, created_at from staff order by created_at asc');
+  return many<StaffSummary>('select id, email, name, role, created_at from staff order by created_at asc');
 }
 
 /**
@@ -353,8 +355,8 @@ export async function createFirstAdmin(
       return null;
     }
     const { rows } = await client.query<Staff>(
-      `insert into staff (email, password_hash, name) values ($1, $2, $3)
-       returning id, email, password_hash, name`,
+      `insert into staff (email, password_hash, name, role) values ($1, $2, $3, 'admin')
+       returning id, email, password_hash, name, role`,
       [email, passwordHash, name],
     );
     await client.query('commit');

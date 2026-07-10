@@ -118,7 +118,7 @@ cuando el wizard no está disponible) está documentado en
 
 ## Desarrollo local
 
-Requisitos: Node 20+ (probado con Node 24), [pnpm](https://pnpm.io), y una
+Requisitos: Node 22.19+ (probado con Node 24), [pnpm](https://pnpm.io), y una
 instancia de Postgres (local o Docker).
 
 ```bash
@@ -136,7 +136,7 @@ agente simplemente pide una foto en lugar de un PDF.
 ```bash
 pnpm -w typecheck   # TypeScript, ambos paquetes
 pnpm test           # suite de tests del server (vitest)
-pnpm lint           # eslint (no bloqueante en CI)
+pnpm lint           # eslint (requerido en CI)
 ```
 
 ## Configuración
@@ -147,6 +147,20 @@ Postgres y se edita desde la página de Configuración del dashboard (o desde
 el wizard del primer arranque). Los secretos se cifran en reposo
 (AES-256-GCM, clave derivada de `AUTH_JWT_SECRET`) y nunca se envían al
 navegador en texto plano.
+
+### Modelo de seguridad MCP
+
+Arix soporta servidores MCP remotos por **Streamable HTTP**. Solo los
+administradores pueden configurarlos. La URL debe ser HTTPS pública; se
+bloquean redes privadas/link-local, redirects, credenciales en URL y query
+strings. Los headers se cifran en reposo. Después de probar la conexión, el
+administrador debe habilitar explícitamente cada tool (deny-by-default).
+Las tools que no declaran ser de solo lectura requieren además un segundo
+switch de riesgo, porque cualquier conversación podría activarlas.
+
+MCP stdio configurable desde el dashboard no se admite porque equivaldría a
+ejecución remota de comandos dentro del contenedor. `MCP_ALLOWED_HOSTS`
+permite fijar una allowlist exacta de hosts en producción.
 
 Cualquiera de esos campos también se puede **sembrar desde una variable de
 entorno** (ver `env.example`, sección 2). La precedencia es **env > base de
@@ -172,6 +186,7 @@ el dashboard):
 | `AGENT_HISTORY_LIMIT` | `30` | Mensajes de historial de conversación por respuesta. |
 | `AGENT_DEBOUNCE_MS` | `60000` | Espera tras el último mensaje del cliente antes de responder (agrupa mensajes seguidos). |
 | `AGENT_MAX_BUBBLES` | `3` | Máximo de burbujas de WhatsApp por respuesta. |
+| `MCP_ALLOWED_HOSTS` | vacío | Allowlist exacta opcional de hosts MCP, separada por comas. |
 
 ## Desplegar en un VPS
 

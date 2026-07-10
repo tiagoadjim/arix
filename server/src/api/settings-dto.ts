@@ -57,13 +57,18 @@ function sanitizeSettingValue(key: string, value: unknown): unknown {
 
 export function toSettingDto(entry: SettingDefinition, resolved: ResolvedEntry): SettingDto {
   const secret = entry.secret === true;
+  const nestedSecret = entry.key === 'mcp.servers';
   return {
     key: entry.key,
     group: entry.group,
     type: entry.type,
     label: entry.label,
-    value: secret ? null : sanitizeSettingValue(entry.key, resolved.value),
-    set: secret ? Boolean(String(resolved.value ?? '').trim()) : resolved.source !== 'default',
+    value: secret && !nestedSecret ? null : sanitizeSettingValue(entry.key, resolved.value),
+    set: nestedSecret
+      ? normalizeMcpServers(resolved.value).length > 0
+      : secret
+        ? Boolean(String(resolved.value ?? '').trim())
+        : resolved.source !== 'default',
     source: resolved.source,
     readOnly: resolved.source === 'env',
     secret,

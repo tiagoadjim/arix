@@ -114,7 +114,7 @@ wizard isn't reachable) is documented in [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## Local development
 
-Requirements: Node 20+ (tested on Node 24), [pnpm](https://pnpm.io), and a
+Requirements: Node 22.19+ (tested on Node 24), [pnpm](https://pnpm.io), and a
 Postgres instance (local or Docker).
 
 ```bash
@@ -132,7 +132,7 @@ for a photo instead of a PDF.
 ```bash
 pnpm -w typecheck   # TypeScript, both packages
 pnpm test           # server test suite (vitest)
-pnpm lint           # eslint (non-blocking in CI)
+pnpm lint           # eslint (required in CI)
 ```
 
 ## Configuration
@@ -142,6 +142,22 @@ profile, agent persona, payment/shipping info — lives encrypted in Postgres
 and is edited from the dashboard's Settings page (or the first-run wizard).
 Secrets are encrypted at rest (AES-256-GCM, key derived from
 `AUTH_JWT_SECRET`) and are never sent to the browser in plaintext.
+
+### MCP security model
+
+Arix supports remote **Streamable HTTP MCP** servers. Only administrators can
+configure them. Endpoints must use public HTTPS; private/link-local addresses,
+redirects, URL credentials and query-string secrets are rejected. Header
+values are encrypted at rest and redacted in the dashboard. After testing a
+server, an administrator must explicitly allow each tool before the
+customer-facing agent can use it (deny by default). Tools not annotated as
+read-only require a second explicit high-risk switch because any customer
+conversation may trigger enabled tools.
+
+Dashboard-configured stdio MCP is intentionally unsupported: accepting an
+arbitrary command from a web session would be remote code execution inside
+the Arix container. Use `MCP_ALLOWED_HOSTS` to enforce an exact hostname
+allowlist in stricter deployments.
 
 Any of those fields can also be **seeded from an environment variable** (see
 `env.example`, section 2). Precedence is **env > database > default**: while
@@ -164,6 +180,7 @@ Only a handful of variables are env-only (no dashboard equivalent):
 | `AGENT_HISTORY_LIMIT` | `30` | Messages of conversation history kept per reply. |
 | `AGENT_DEBOUNCE_MS` | `60000` | Wait after the customer's last message before replying (batches quick follow-ups). |
 | `AGENT_MAX_BUBBLES` | `3` | Max WhatsApp bubbles per reply. |
+| `MCP_ALLOWED_HOSTS` | empty | Optional comma-separated exact allowlist for remote MCP hosts. |
 
 ## Deploying to a VPS
 
@@ -194,7 +211,8 @@ backups, and zero-downtime updates.
 - API keys and WooCommerce credentials are encrypted at rest
   (AES-256-GCM) and are never returned to the browser in plaintext.
 - Auth is a signed JWT cookie over your own staff table (bcrypt-hashed
-  passwords) — no external identity provider required.
+  passwords) with administrator/staff authorization — no external identity
+  provider required.
 - Set `COOKIE_SECURE=true` and serve the dashboard over HTTPS in production
   (see the VPS guide).
 - The only data that leaves your infrastructure is what's necessary for the

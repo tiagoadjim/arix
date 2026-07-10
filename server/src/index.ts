@@ -5,6 +5,7 @@ import { seedFromEnvOnFirstBoot } from './config/runtime';
 import { WhatsAppGateway } from './whatsapp/socket';
 import { MessageRouter } from './handlers/messages';
 import { createApiServer } from './api/server';
+import { closeMcpPool } from './mcp/manager';
 
 async function main(): Promise<void> {
   await migrate();
@@ -26,13 +27,19 @@ async function main(): Promise<void> {
   await gateway.start();
   logger.info('arix server started');
 
-  const shutdown = (sig: string) => {
+  let shuttingDown = false;
+  const shutdown = async (sig: string) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
     logger.info({ sig }, 'shutting down');
-    httpServer.close();
+    await Promise.allSettled([
+      closeMcpPool(),
+      new Promise<void>((resolve) => httpServer.close(() => resolve())),
+    ]);
     process.exit(0);
   };
-  process.on('SIGINT', () => shutdown('SIGINT'));
-  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => void shutdown('SIGINT'));
+  process.on('SIGTERM', () => void shutdown('SIGTERM'));
 }
 
 main().catch((err) => {

@@ -41,6 +41,7 @@ export interface Agent {
   id: string;
   email: string;
   name: string | null;
+  role: 'admin' | 'staff';
   created_at: string;
 }
 

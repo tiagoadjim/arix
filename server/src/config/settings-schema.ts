@@ -278,6 +278,9 @@ export const SETTINGS_SCHEMA: readonly SettingDefinition[] = [
     key: 'mcp.servers',
     group: 'mcp',
     type: 'json',
+    // Encrypt the entire blob at rest because HTTP headers commonly contain
+    // bearer tokens/API keys. The dashboard receives a custom redacted DTO.
+    secret: true,
     // Array of McpServerConfig (see mcp/types.ts). Empty by default — operators
     // add servers from the dashboard / setup wizard.
     default: [] as unknown[],

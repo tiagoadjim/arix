@@ -3,13 +3,6 @@ import { orderTools } from './orders';
 import { paymentTools } from './payments';
 import { handoffTools } from './handoff';
 import type { ToolSpec } from '../agent/tool-spec';
-import {
-  BUILTIN_SKILL_IDS,
-  DEFAULT_ENABLED_SKILLS,
-  isKnownSkillId,
-  normalizeEnabledSkills,
-} from './ids';
-
 export {
   BUILTIN_SKILL_IDS,
   DEFAULT_ENABLED_SKILLS,

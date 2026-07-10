@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { api, apiErrorMessage, type SettingDto } from '@/lib/api';
 import { setLocaleCookie, type Locale } from '@/lib/i18n';
@@ -42,6 +43,7 @@ type Grouped = Record<string, SettingDto[]>;
 
 export default function SettingsPage() {
   const { t } = useT();
+  const router = useRouter();
   const [grouped, setGrouped] = useState<Grouped | null>(null);
   const [loadError, setLoadError] = useState(false);
 
@@ -56,8 +58,14 @@ export default function SettingsPage() {
   }, []);
 
   useEffect(() => {
-    void reload();
-  }, [reload]);
+    void api
+      .me()
+      .then((user) => {
+        if (user.role !== 'admin') router.replace('/');
+        else void reload();
+      })
+      .catch(() => router.replace('/login'));
+  }, [reload, router]);
 
   if (!grouped) {
     return (

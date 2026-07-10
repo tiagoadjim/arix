@@ -65,23 +65,24 @@ describe('toSettingDto', () => {
     expect(dto.readOnly).toBe(true);
   });
 
-  it('strips MCP env/header secret values from mcp.servers', () => {
+  it('strips MCP header secret values from mcp.servers', () => {
     const dto = toSettingDto(entry('mcp.servers'), {
       value: [
         {
           id: 'github',
           name: 'GitHub',
           enabled: true,
-          transport: 'stdio',
-          command: 'npx',
-          env: { GITHUB_TOKEN: 'ghp_secret' },
+          transport: 'http',
+          url: 'https://example.com/mcp',
+          headers: { Authorization: 'Bearer ghp_secret' },
+          allowedTools: ['search'],
         },
       ],
       source: 'db',
     });
     expect(JSON.stringify(dto)).not.toContain('ghp_secret');
-    const servers = dto.value as Array<{ envKeys: string[] }>;
-    expect(servers[0]?.envKeys).toEqual(['GITHUB_TOKEN']);
+    const servers = dto.value as Array<{ headerKeys: string[] }>;
+    expect(servers[0]?.headerKeys).toEqual(['Authorization']);
   });
 });
 

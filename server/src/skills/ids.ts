@@ -21,6 +21,12 @@ export function normalizeEnabledSkills(raw: unknown): string[] {
   if (!Array.isArray(raw)) return [...DEFAULT_ENABLED_SKILLS];
   const ids = raw.filter((v): v is string => typeof v === 'string' && isKnownSkillId(v));
   if (raw.length === 0) return [];
-  if (ids.length === 0 && raw.length > 0) return [...DEFAULT_ENABLED_SKILLS];
   return [...new Set(ids)];
+}
+
+export function isValidEnabledSkills(raw: unknown): raw is string[] {
+  return (
+    Array.isArray(raw) &&
+    raw.every((value) => typeof value === 'string' && isKnownSkillId(value))
+  );
 }

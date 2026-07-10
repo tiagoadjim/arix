@@ -8,10 +8,10 @@ import {
 import {
   isValidMcpServerId,
   namespaceMcpTool,
-  parseNamespacedMcpTool,
   normalizeMcpServers,
   mergeMcpServers,
   toMcpServerDto,
+  validateMcpServersInput,
 } from '../src/mcp/types';
 
 describe('skills registry', () => {
@@ -52,30 +52,38 @@ describe('mcp types', () => {
     expect(isValidMcpServerId('Has Caps')).toBe(false);
   });
 
-  it('namespaces and parses tool names', () => {
+  it('namespaces tool names without collisions and stays under 64 chars', () => {
     const ns = namespaceMcpTool('github', 'list_issues');
-    expect(ns).toBe('mcp_github__list_issues');
-    expect(parseNamespacedMcpTool(ns)).toEqual({ serverId: 'github', toolName: 'list_issues' });
-    const withUnderscore = namespaceMcpTool('my_server', 'do_thing');
-    expect(withUnderscore).toBe('mcp_my_server__do_thing');
-    expect(parseNamespacedMcpTool(withUnderscore)).toEqual({
-      serverId: 'my_server',
-      toolName: 'do_thing',
-    });
-    expect(parseNamespacedMcpTool('search_catalog')).toBeNull();
+    expect(ns).toMatch(/^mcp_github__list_issues_[a-f0-9]{10}$/);
+    expect(ns.length).toBeLessThanOrEqual(64);
+    expect(namespaceMcpTool('github', 'a.b')).not.toBe(namespaceMcpTool('github', 'a/b'));
+    expect(namespaceMcpTool('a'.repeat(32), 'x'.repeat(128)).length).toBeLessThanOrEqual(64);
   });
 
-  it('normalizes a server list and drops invalid entries', () => {
+  it('accepts HTTP and drops stdio/invalid entries at runtime', () => {
     const servers = normalizeMcpServers([
       { id: 'ok', name: 'OK', transport: 'stdio', command: 'npx', enabled: true },
       { id: '1bad', transport: 'stdio' },
-      { id: 'ok', transport: 'http', url: 'https://example.com' }, // duplicate id dropped
+      {
+        id: 'remote',
+        transport: 'http',
+        url: 'https://example.com/mcp',
+        allowedTools: ['search'],
+      },
       null,
       'nope',
     ]);
     expect(servers).toHaveLength(1);
-    expect(servers[0]?.id).toBe('ok');
-    expect(servers[0]?.command).toBe('npx');
+    expect(servers[0]?.id).toBe('remote');
+    expect(servers[0]?.allowedTools).toEqual(['search']);
+  });
+
+  it('strict validation rejects stdio and duplicate ids', () => {
+    const result = validateMcpServersInput([
+      { id: 'same', transport: 'stdio', command: 'npx' },
+      { id: 'same', transport: 'http', url: 'https://example.com/mcp' },
+    ]);
+    expect(result.ok).toBe(false);
   });
 
   it('strips secret values in DTOs', () => {
@@ -83,26 +91,26 @@ describe('mcp types', () => {
       id: 's',
       name: 'S',
       enabled: true,
-      transport: 'stdio',
-      command: 'npx',
-      env: { TOKEN: 'secret-value' },
+      transport: 'http',
+      url: 'https://example.com/mcp',
       headers: { Authorization: 'Bearer x' },
+      allowedTools: ['search'],
+      allowMutatingTools: false,
     });
-    expect(dto.envKeys).toEqual(['TOKEN']);
     expect(dto.headerKeys).toEqual(['Authorization']);
-    expect(JSON.stringify(dto)).not.toContain('secret-value');
     expect(JSON.stringify(dto)).not.toContain('Bearer');
   });
 
-  it('merges blank env/header values as keep-current', () => {
+  it('merges blank header values as keep-current', () => {
     const previous = normalizeMcpServers([
       {
         id: 's',
         name: 'S',
         enabled: true,
-        transport: 'stdio',
-        command: 'npx',
-        env: { TOKEN: 'keep-me', DROP: 'gone' },
+        transport: 'http',
+        url: 'https://example.com/mcp',
+        headers: { Authorization: 'Bearer keep-me', 'X-Drop': 'gone' },
+        allowedTools: ['search'],
       },
     ]);
     const incoming = normalizeMcpServers([
@@ -110,12 +118,13 @@ describe('mcp types', () => {
         id: 's',
         name: 'S',
         enabled: true,
-        transport: 'stdio',
-        command: 'npx',
-        env: { TOKEN: '', NEW: 'fresh' },
+        transport: 'http',
+        url: 'https://example.com/mcp',
+        headers: { Authorization: '', 'X-New': 'fresh' },
+        allowedTools: ['search'],
       },
     ]);
     const merged = mergeMcpServers(incoming, previous);
-    expect(merged[0]?.env).toEqual({ TOKEN: 'keep-me', NEW: 'fresh' });
+    expect(merged[0]?.headers).toEqual({ Authorization: 'Bearer keep-me', 'X-New': 'fresh' });
   });
 });

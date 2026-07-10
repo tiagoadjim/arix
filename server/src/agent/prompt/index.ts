@@ -47,6 +47,9 @@ export interface PromptParams {
    * presenting as a human teammate. */
   discloseBot: boolean;
   maxBubbles: number;
+  /** Exact tool names advertised for this turn. Prompt instructions must
+   * never tell the model to call a disabled/nonexistent tool. */
+  enabledTools: ReadonlySet<string>;
 }
 
 /**
@@ -66,6 +69,7 @@ export interface ResolvedPromptConfig {
   storefrontUrl: string;
   infoBlocks: { payment: string; shipping: string; general: string };
   complianceRules: string;
+  enabledToolNames?: string[];
 }
 
 const TEMPLATES: Record<Language, (p: PromptParams) => string> = {
@@ -105,6 +109,17 @@ export function buildSystemPrompt(
     discloseBot: resolved.discloseBot,
     // Stays env-driven (not a runtime/dashboard setting) — see server/src/config.ts.
     maxBubbles: config.AGENT_MAX_BUBBLES,
+    // Backward-compatible default for pure prompt tests/callers; the live
+    // agent always passes the exact definitions advertised for this turn.
+    enabledTools: new Set(
+      resolved.enabledToolNames ?? [
+        'search_catalog',
+        'view_product',
+        'find_order',
+        'confirm_payment',
+        'handoff_to_human',
+      ],
+    ),
   };
 
   return TEMPLATES[resolved.language](params);

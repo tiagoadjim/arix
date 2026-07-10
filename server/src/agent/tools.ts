@@ -52,17 +52,14 @@ export async function runTool(name: string, rawArgs: string, ctx: ToolContext): 
       const result = await spec.handler(args, ctx);
       return JSON.stringify(result);
     } catch (err) {
-      logger.error({ err, name, args }, 'tool handler threw');
-      return JSON.stringify({
-        error: 'internal error running the tool',
-        detail: err instanceof Error ? err.message : String(err),
-      });
+      logger.error({ err, name }, 'tool handler threw');
+      return JSON.stringify({ error: 'internal error running the tool' });
     }
   }
 
   // Not a built-in — try MCP (namespaced mcp_<server>_<tool>).
   if (name.startsWith('mcp_')) {
-    const mcpResult = await runMcpTool(name, rawArgs);
+    const mcpResult = await runMcpTool(name, rawArgs, { conversationId: ctx.conversationId });
     if (mcpResult !== null) return mcpResult;
   }
 

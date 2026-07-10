@@ -1,10 +1,13 @@
-/**
- * Operator-configured MCP (Model Context Protocol) servers. Each enabled
- * server contributes its tools to the agent under a namespaced tool name
- * (`mcp_<serverId>_<toolName>`) so they never collide with built-in skills.
- */
+import { createHash } from 'node:crypto';
 
-export type McpTransport = 'stdio' | 'http';
+/** Production MCP configuration. Only remote Streamable HTTP is accepted.
+ * Spawning operator-provided stdio commands from the dashboard would turn a
+ * staff session into arbitrary code execution inside the server container. */
+export type McpTransport = 'http';
+
+export const MAX_MCP_SERVERS = 10;
+export const MAX_MCP_TOOLS_PER_SERVER = 50;
+export const MAX_MCP_HEADERS = 20;
 
 export interface McpServerConfig {
   /** Stable slug used in tool name prefixes — lowercase alphanumeric + `_`/`-`. */
@@ -13,18 +16,16 @@ export interface McpServerConfig {
   name: string;
   enabled: boolean;
   transport: McpTransport;
-  /** stdio: executable to spawn. */
-  command?: string;
-  /** stdio: argv after the command. */
-  args?: string[];
-  /** stdio: extra env vars for the child process (may hold secrets). */
-  env?: Record<string, string>;
-  /** stdio: working directory. */
-  cwd?: string;
   /** http: Streamable HTTP endpoint URL. */
-  url?: string;
+  url: string;
   /** http: extra request headers (may hold secrets, e.g. Authorization). */
   headers?: Record<string, string>;
+  /** Original MCP tool names that may be exposed to the model. Deny by
+   * default: an empty list connects successfully but advertises no tools. */
+  allowedTools: string[];
+  /** Tools not explicitly annotated read-only are blocked unless an admin
+   * enables this additional high-risk switch. */
+  allowMutatingTools: boolean;
 }
 
 /** Dashboard-facing view: secret env/header values are never sent in plaintext. */
@@ -33,14 +34,11 @@ export interface McpServerDto {
   name: string;
   enabled: boolean;
   transport: McpTransport;
-  command?: string;
-  args?: string[];
-  /** Env keys present; values are never returned. */
-  envKeys: string[];
-  cwd?: string;
-  url?: string;
+  url: string;
   /** Header names present; values are never returned. */
   headerKeys: string[];
+  allowedTools: string[];
+  allowMutatingTools: boolean;
 }
 
 export interface McpToolInfo {
@@ -50,71 +48,155 @@ export interface McpToolInfo {
   /** Namespaced name advertised to the LLM. */
   namespacedName: string;
   description?: string;
+  readOnly: boolean;
 }
 
 // No consecutive underscores — `__` is the delimiter between server id and
 // tool name in namespaced MCP tool names (`mcp_<id>__<tool>`).
-const ID_RE = /^[a-z](?:[a-z0-9-]|_(?!_)){0,63}$/;
+const ID_RE = /^[a-z](?:[a-z0-9-]|_(?!_)){0,31}$/;
+const HEADER_NAME_RE = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
+const FORBIDDEN_HEADERS = new Set([
+  'connection',
+  'content-length',
+  'cookie',
+  'host',
+  'proxy-authorization',
+  'te',
+  'trailer',
+  'transfer-encoding',
+  'upgrade',
+]);
 
 export function isValidMcpServerId(id: string): boolean {
   return ID_RE.test(id);
 }
 
-/** Namespace an MCP tool so it can't collide with built-in skill tool names.
- * Format: `mcp_<serverId>__<toolName>` — double underscore separates the id
- * from the tool so server ids may themselves contain single underscores. */
+function isSafeToolName(value: string): boolean {
+  return (
+    value.length > 0 &&
+    value.length <= 128 &&
+    [...value].every((char) => {
+      const code = char.charCodeAt(0);
+      return code > 31 && code !== 127;
+    })
+  );
+}
+
+/** Namespace an MCP tool into an OpenAI-compatible function name (max 64
+ * chars). A hash of the original pair prevents collisions after sanitizing. */
 export function namespaceMcpTool(serverId: string, toolName: string): string {
-  // OpenAI function names: letters, digits, `_`, `-` — replace anything else.
   const safeTool = toolName.replace(/[^a-zA-Z0-9_-]/g, '_');
-  return `mcp_${serverId}__${safeTool}`;
+  const hash = createHash('sha256').update(`${serverId}\0${toolName}`).digest('hex').slice(0, 10);
+  const prefix = `mcp_${serverId}__`;
+  const room = 64 - prefix.length - hash.length - 1;
+  return `${prefix}${safeTool.slice(0, Math.max(1, room))}_${hash}`;
 }
 
-export function parseNamespacedMcpTool(
-  namespaced: string,
-): { serverId: string; toolName: string } | null {
-  if (!namespaced.startsWith('mcp_')) return null;
-  const rest = namespaced.slice('mcp_'.length);
-  const idx = rest.indexOf('__');
-  if (idx <= 0) return null;
-  return { serverId: rest.slice(0, idx), toolName: rest.slice(idx + 2) };
+function normalizeHeaders(raw: unknown): Record<string, string> | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const headers: Record<string, string> = {};
+  for (const [name, value] of Object.entries(raw as Record<string, unknown>).slice(0, MAX_MCP_HEADERS)) {
+    const lower = name.toLowerCase();
+    if (
+      typeof value === 'string' &&
+      value.length <= 4096 &&
+      HEADER_NAME_RE.test(name) &&
+      !FORBIDDEN_HEADERS.has(lower)
+    ) {
+      headers[name] = value;
+    }
+  }
+  return Object.keys(headers).length > 0 ? headers : undefined;
 }
 
-/** Coerce unknown JSON into a clean McpServerConfig list. Drops invalid entries. */
+function normalizeAllowedTools(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  return [
+    ...new Set(
+      raw
+        .filter((value): value is string => typeof value === 'string' && isSafeToolName(value))
+        .slice(0, MAX_MCP_TOOLS_PER_SERVER),
+    ),
+  ];
+}
+
+/** Coerce persisted JSON into a bounded config list. Invalid entries are
+ * ignored at runtime; API writes use validateMcpServersInput and fail closed. */
 export function normalizeMcpServers(raw: unknown): McpServerConfig[] {
   if (!Array.isArray(raw)) return [];
   const out: McpServerConfig[] = [];
   const seen = new Set<string>();
-  for (const item of raw) {
+  for (const item of raw.slice(0, MAX_MCP_SERVERS)) {
     if (!item || typeof item !== 'object') continue;
     const o = item as Record<string, unknown>;
     const id = typeof o.id === 'string' ? o.id.trim() : '';
     if (!isValidMcpServerId(id) || seen.has(id)) continue;
+    if (o.transport !== 'http') continue;
+    const url = typeof o.url === 'string' ? o.url.trim() : '';
+    if (!url) continue;
     seen.add(id);
-    const transport: McpTransport = o.transport === 'http' ? 'http' : 'stdio';
     const name = typeof o.name === 'string' && o.name.trim() ? o.name.trim() : id;
     const enabled = o.enabled !== false;
-    const cfg: McpServerConfig = { id, name, enabled, transport };
-    if (typeof o.command === 'string') cfg.command = o.command;
-    if (Array.isArray(o.args)) cfg.args = o.args.filter((a): a is string => typeof a === 'string');
-    if (o.env && typeof o.env === 'object' && !Array.isArray(o.env)) {
-      const env: Record<string, string> = {};
-      for (const [k, v] of Object.entries(o.env as Record<string, unknown>)) {
-        if (typeof v === 'string') env[k] = v;
-      }
-      cfg.env = env;
-    }
-    if (typeof o.cwd === 'string') cfg.cwd = o.cwd;
-    if (typeof o.url === 'string') cfg.url = o.url;
-    if (o.headers && typeof o.headers === 'object' && !Array.isArray(o.headers)) {
-      const headers: Record<string, string> = {};
-      for (const [k, v] of Object.entries(o.headers as Record<string, unknown>)) {
-        if (typeof v === 'string') headers[k] = v;
-      }
-      cfg.headers = headers;
-    }
-    out.push(cfg);
+    out.push({
+      id,
+      name: name.slice(0, 100),
+      enabled,
+      transport: 'http',
+      url,
+      headers: normalizeHeaders(o.headers),
+      allowedTools: normalizeAllowedTools(o.allowedTools),
+      allowMutatingTools: o.allowMutatingTools === true,
+    });
   }
   return out;
+}
+
+export type ValidateMcpServersResult =
+  | { ok: true; servers: McpServerConfig[] }
+  | { ok: false; errors: string[] };
+
+/** Strict API boundary validation. Never silently drops malformed servers,
+ * duplicate ids, unsafe headers or unsupported stdio transports. */
+export function validateMcpServersInput(raw: unknown): ValidateMcpServersResult {
+  if (!Array.isArray(raw)) return { ok: false, errors: ['mcp.servers must be an array'] };
+  if (raw.length > MAX_MCP_SERVERS) {
+    return { ok: false, errors: [`at most ${MAX_MCP_SERVERS} MCP servers are allowed`] };
+  }
+  const errors: string[] = [];
+  const ids = new Set<string>();
+  raw.forEach((item, index) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) {
+      errors.push(`server ${index + 1}: invalid object`);
+      return;
+    }
+    const o = item as Record<string, unknown>;
+    const id = typeof o.id === 'string' ? o.id.trim() : '';
+    if (!isValidMcpServerId(id)) errors.push(`server ${index + 1}: invalid id`);
+    else if (ids.has(id)) errors.push(`server ${index + 1}: duplicate id`);
+    else ids.add(id);
+    if (o.transport !== 'http') errors.push(`server ${id || index + 1}: only HTTP transport is supported`);
+    if (typeof o.url !== 'string' || !o.url.trim()) errors.push(`server ${id || index + 1}: URL is required`);
+    if (Array.isArray(o.allowedTools) && o.allowedTools.length > MAX_MCP_TOOLS_PER_SERVER) {
+      errors.push(`server ${id || index + 1}: too many allowed tools`);
+    }
+    if (o.headers && typeof o.headers === 'object' && !Array.isArray(o.headers)) {
+      const entries = Object.entries(o.headers as Record<string, unknown>);
+      if (entries.length > MAX_MCP_HEADERS) errors.push(`server ${id || index + 1}: too many headers`);
+      for (const [header, value] of entries) {
+        if (
+          !HEADER_NAME_RE.test(header) ||
+          FORBIDDEN_HEADERS.has(header.toLowerCase()) ||
+          typeof value !== 'string' ||
+          value.length > 4096
+        ) {
+          errors.push(`server ${id || index + 1}: invalid or forbidden header "${header}"`);
+        }
+      }
+    }
+  });
+  if (errors.length > 0) return { ok: false, errors };
+  const servers = normalizeMcpServers(raw);
+  return servers.length === raw.length ? { ok: true, servers } : { ok: false, errors: ['invalid MCP configuration'] };
 }
 
 /** Strip secret values for the dashboard. */
@@ -124,12 +206,10 @@ export function toMcpServerDto(cfg: McpServerConfig): McpServerDto {
     name: cfg.name,
     enabled: cfg.enabled,
     transport: cfg.transport,
-    command: cfg.command,
-    args: cfg.args,
-    envKeys: Object.keys(cfg.env ?? {}),
-    cwd: cfg.cwd,
     url: cfg.url,
     headerKeys: Object.keys(cfg.headers ?? {}),
+    allowedTools: [...cfg.allowedTools],
+    allowMutatingTools: cfg.allowMutatingTools,
   };
 }
 
@@ -146,20 +226,12 @@ export function mergeMcpServers(
   return incoming.map((next) => {
     const prev = prevById.get(next.id);
     if (!prev) return next;
-    const env = { ...(next.env ?? {}) };
-    for (const [k, v] of Object.entries(env)) {
-      if (!v.trim() && prev.env?.[k] !== undefined) env[k] = prev.env[k];
-    }
-    // Keys present on prev but omitted from next (dashboard only sends typed
-    // keys) — keep them when the dashboard sent the key list via empty values.
-    // If the dashboard omitted a key entirely, treat it as removed.
     const headers = { ...(next.headers ?? {}) };
     for (const [k, v] of Object.entries(headers)) {
       if (!v.trim() && prev.headers?.[k] !== undefined) headers[k] = prev.headers[k];
     }
     return {
       ...next,
-      env: Object.keys(env).length > 0 ? env : undefined,
       headers: Object.keys(headers).length > 0 ? headers : undefined,
     };
   });

@@ -31,6 +31,7 @@ export function InboxList() {
   const [filter, setFilter] = useState<Filter>('all');
   const [muted, setMutedState] = useState(false);
   const [fetchError, setFetchError] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
 
   // Snapshots of the previous poll so we can detect *changes* and chime.
   const prevUnread = useRef<Map<string, number>>(new Map());
@@ -40,6 +41,7 @@ export function InboxList() {
   useEffect(() => {
     setMutedState(isMuted());
     initAudioUnlock(); // unlock audio on first user interaction (autoplay policy)
+    void api.me().then((user) => setIsAdmin(user.role === 'admin')).catch(() => {});
   }, []);
 
   const load = useCallback(async () => {
@@ -206,12 +208,14 @@ export function InboxList() {
       </div>
 
       <div className="flex items-center justify-between gap-1 border-t border-border p-2">
-        <Button variant="ghost" size="sm" className="gap-1.5" asChild>
-          <Link href="/config">
-            <SettingsIcon className="size-4" />
-            {t.sidebar.settingsNav}
-          </Link>
-        </Button>
+        {isAdmin && (
+          <Button variant="ghost" size="sm" className="gap-1.5" asChild>
+            <Link href="/config">
+              <SettingsIcon className="size-4" />
+              {t.sidebar.settingsNav}
+            </Link>
+          </Button>
+        )}
         <ThemeToggle />
         <Button variant="ghost" size="icon-sm" onClick={signOut} aria-label={t.sidebar.signOut} title={t.sidebar.signOut}>
           <LogOutIcon className="size-4" />

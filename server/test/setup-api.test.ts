@@ -57,7 +57,7 @@ import { createApiServer } from '../src/api/server';
 import { signSession, SESSION_COOKIE } from '../src/api/auth';
 import { invalidate } from '../src/config/runtime';
 import { MAX_LLM_COST_PER_MILLION_USD } from '../src/config/settings-schema';
-import { encryptSecret } from '../src/config/secret';
+import { decryptSecret, encryptSecret } from '../src/config/secret';
 import type { WhatsAppGateway } from '../src/whatsapp/socket';
 
 const STAFF = {
@@ -317,13 +317,12 @@ describe('authenticated sessions and RBAC', () => {
     expect(res.headers['set-cookie']?.[0]).toMatch(new RegExp(`^${SESSION_COOKIE}=;`));
   });
 
-  it('allows an agent to use non-administrative authenticated endpoints', async () => {
+  it('does not grant an authenticated agent access to pairing administration', async () => {
     const app = createApiServer({ gateway: fakeGateway({ latestQR: 'qr' }) });
     const res = await request(app)
       .get('/api/whatsapp/status')
       .set('Cookie', await authCookie(AGENT_STAFF));
-    expect(res.status).toBe(200);
-    expect(res.body).toEqual({ connected: false, hasQr: true });
+    expect(res.status).toBe(403);
   });
 
   it('returns 403 for every administrative surface when the current DB role is agent', async () => {
@@ -601,6 +600,14 @@ describe('GET /api/settings', () => {
     expect(res.status).toBe(401);
   });
 
+  it('requires an administrator role', async () => {
+    getStaffById.mockResolvedValue(AGENT_STAFF);
+    const app = createApiServer({ gateway: fakeGateway() });
+    const res = await request(app).get('/api/settings').set('Cookie', await authCookie(AGENT_STAFF));
+    expect(res.status).toBe(403);
+    expect(res.body).toEqual({ error: 'forbidden' });
+  });
+
   it('never leaks a DB-sourced secret in plaintext, anywhere in the response', async () => {
     await withEnv({ LLM_API_KEY: undefined }, async () => {
       getSettings.mockResolvedValue({ 'llm.api_key': encryptSecret('sk-must-not-leak') });
@@ -635,6 +642,24 @@ describe('GET /api/settings', () => {
     const res = await request(app).get('/api/settings').set('Cookie', await authCookie());
     const nameDto = res.body.business.find((d: { key: string }) => d.key === 'business.name');
     expect(nameDto).toMatchObject({ value: 'Acme Vapes', source: 'db', readOnly: false, set: true, secret: false });
+  });
+});
+
+describe('administrative authorization', () => {
+  it('blocks regular staff from setup and WhatsApp control endpoints', async () => {
+    getStaffById.mockResolvedValue(AGENT_STAFF);
+    const app = createApiServer({ gateway: fakeGateway() });
+    const cookie = await authCookie(AGENT_STAFF);
+    const [qr, status, complete] = await Promise.all([
+      request(app).get('/api/qr').set('Cookie', cookie),
+      request(app).get('/api/whatsapp/status').set('Cookie', cookie),
+      request(app).post('/api/setup/complete').set('Cookie', cookie),
+    ]);
+    for (const response of [qr, status, complete]) {
+      expect(response.status).toBe(403);
+      expect(response.body).toEqual({ error: 'forbidden' });
+    }
+    expect(upsertSetting).not.toHaveBeenCalled();
   });
 });
 
@@ -681,6 +706,68 @@ describe('PUT /api/settings', () => {
         metadata: { keys: ['business.name', 'agent.language'] },
       }),
     );
+  });
+
+  it('encrypts MCP headers at rest', async () => {
+    await withEnv({ MCP_SERVERS: undefined }, async () => {
+      const app = createApiServer({ gateway: fakeGateway() });
+      const value = [
+        {
+          id: 'remote',
+          name: 'Remote',
+          enabled: true,
+          transport: 'http',
+          url: 'https://8.8.8.8/mcp',
+          headers: { Authorization: 'Bearer secret-token' },
+          allowedTools: [],
+        },
+      ];
+      const res = await request(app)
+        .put('/api/settings')
+        .set('Cookie', await authCookie())
+        .send({ key: 'mcp.servers', value });
+      expect(res.status).toBe(200);
+      const entries = upsertSettings.mock.calls[0]?.[0] as Array<{ key: string; value: string }>;
+      const stored = entries.find((entry) => entry.key === 'mcp.servers')?.value;
+      expect(stored).toMatch(/^enc:v2:[A-Za-z0-9_-]{12}:/);
+      expect(stored).toBeTypeOf('string');
+      if (!stored) throw new Error('mcp.servers was not persisted');
+      expect(stored).not.toContain('secret-token');
+      expect(decryptSecret(stored)).toContain('secret-token');
+    });
+  });
+
+  it('rejects stdio MCP and private-network URLs', async () => {
+    await withEnv({ MCP_SERVERS: undefined }, async () => {
+      const app = createApiServer({ gateway: fakeGateway() });
+      const stdio = await request(app)
+        .put('/api/settings')
+        .set('Cookie', await authCookie())
+        .send({
+          key: 'mcp.servers',
+          value: [{ id: 'local', transport: 'stdio', command: '/bin/sh', args: ['-c', 'id'] }],
+        });
+      expect(stdio.status).toBe(400);
+      expect(stdio.body.error).toBe('invalid_mcp_config');
+
+      const privateUrl = await request(app)
+        .put('/api/settings')
+        .set('Cookie', await authCookie())
+        .send({
+          key: 'mcp.servers',
+          value: [
+            {
+              id: 'metadata',
+              transport: 'http',
+              url: 'https://169.254.169.254/latest',
+              allowedTools: [],
+            },
+          ],
+        });
+      expect(privateUrl.status).toBe(400);
+      expect(privateUrl.body.error).toBe('unsafe_mcp_url');
+      expect(upsertSetting).not.toHaveBeenCalledWith('mcp.servers', expect.anything());
+    });
   });
 
   it('encrypts a secret value before storing it (once its env seed is not set)', async () => {

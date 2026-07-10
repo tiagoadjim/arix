@@ -5,9 +5,14 @@
 -- access on upgrade; newly-created staff default to the least-privileged role.
 alter table staff add column if not exists role text;
 update staff set role = 'admin' where role is null;
+-- 0004_staff_roles called the least-privileged role `staff`; the hardened
+-- runtime calls it `agent`. Keep the oldest-admin promotion from 0004 and
+-- translate every remaining account before replacing its check constraint.
+update staff set role = 'agent' where role = 'staff';
 alter table staff alter column role set default 'agent';
 alter table staff alter column role set not null;
 alter table staff add column if not exists session_version integer not null default 0;
+alter table staff drop constraint if exists staff_role_check;
 do $$
 begin
   if not exists (

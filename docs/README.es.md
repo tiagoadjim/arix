@@ -1,12 +1,5 @@
 <p align="center">
-  <img src="../dashboard/public/logo.svg" alt="Arix" width="96" />
-</p>
-
-<h1 align="center">Arix</h1>
-
-<p align="center">
-  Agente de IA de código abierto para WooCommerce, sobre WhatsApp.<br/>
-  Autoalojado, multi-LLM, listo en minutos.
+  <img src="assets/arix-readme-hero.webp" alt="Arix — agente de ventas con IA de código abierto para WooCommerce y WhatsApp" width="100%" />
 </p>
 
 <p align="center">
@@ -41,7 +34,9 @@ salen de tu servidor.
 - **Conoce el horario del negocio** — las respuestas tienen en cuenta el
   horario y el huso horario configurados.
 
-<!-- Capturas de pantalla: inbox del dashboard, vista de conversación y wizard de configuración van acá. -->
+<p align="center">
+  <img src="assets/arix-product-flow.webp" alt="Flujo de Arix: WhatsApp, catálogo en vivo, verificación de pagos y derivación humana" width="100%" />
+</p>
 
 ## Arquitectura
 
@@ -162,6 +157,20 @@ independiente; nunca se envían al navegador en texto plano. Las instalaciones
 existentes pueden usar temporalmente el fallback legado derivado del JWT
 mientras rotan sus claves.
 
+### Modelo de seguridad MCP
+
+Arix soporta servidores MCP remotos por **Streamable HTTP**. Solo los
+administradores pueden configurarlos. La URL debe ser HTTPS pública; se
+bloquean redes privadas/link-local, redirects, credenciales en URL y query
+strings. Los headers se cifran en reposo. Después de probar la conexión, el
+administrador debe habilitar explícitamente cada tool (deny-by-default).
+Las tools que no declaran ser de solo lectura requieren además un segundo
+switch de riesgo, porque cualquier conversación podría activarlas.
+
+MCP stdio configurable desde el dashboard no se admite porque equivaldría a
+ejecución remota de comandos dentro del contenedor. `MCP_ALLOWED_HOSTS`
+permite fijar una allowlist exacta de hosts en producción.
+
 Cualquiera de esos campos también se puede **sembrar desde una variable de
 entorno** (ver `env.example`, sección 2). La precedencia es **env > base de
 datos > default**: mientras una variable de entorno esté definida, gana y
@@ -196,6 +205,7 @@ el dashboard):
 | `AGENT_DEBOUNCE_MS` | `60000` | Espera tras el último mensaje del cliente antes de responder (agrupa mensajes seguidos). |
 | `AGENT_MAX_BUBBLES` | `3` | Máximo de burbujas de WhatsApp por respuesta. |
 | `AGENT_TURN_TIMEOUT_MS` | `90000` | Presupuesto total de un turno, incluyendo reintentos, backoff y tools. |
+| `MCP_ALLOWED_HOSTS` | vacío | Allowlist exacta opcional de hosts MCP, separada por comas. |
 
 ## Desplegar en un VPS
 
@@ -223,6 +233,10 @@ concisa: Caddy como proxy reverso con HTTPS automático, cómo poner
   de correr en cada arranque.
 
 ## Seguridad y privacidad
+
+<p align="center">
+  <img src="assets/arix-self-hosted.webp" alt="Arix autoalojado: tu infraestructura y tus datos" width="100%" />
+</p>
 
 - Todo se autoaloja en tu propia infraestructura: Postgres, los archivos de
   comprobantes y los datos de sesión de WhatsApp viven en tus volúmenes de

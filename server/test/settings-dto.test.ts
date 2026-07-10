@@ -78,6 +78,26 @@ describe('toSettingDto', () => {
     expect(dto.set).toBe(true);
     expect(dto.readOnly).toBe(true);
   });
+
+  it('strips MCP header secret values from mcp.servers', () => {
+    const dto = toSettingDto(entry('mcp.servers'), {
+      value: [
+        {
+          id: 'github',
+          name: 'GitHub',
+          enabled: true,
+          transport: 'http',
+          url: 'https://example.com/mcp',
+          headers: { Authorization: 'Bearer ghp_secret' },
+          allowedTools: ['search'],
+        },
+      ],
+      source: 'db',
+    });
+    expect(JSON.stringify(dto)).not.toContain('ghp_secret');
+    const servers = dto.value as Array<{ headerKeys: string[] }>;
+    expect(servers[0]?.headerKeys).toEqual(['Authorization']);
+  });
 });
 
 describe('buildSettingsDto', () => {
@@ -92,7 +112,19 @@ describe('buildSettingsDto', () => {
   it('groups every schema key by its declared group', () => {
     const dto = buildSettingsDto(fullMeta({}));
     expect(Object.keys(dto)).toEqual(
-      expect.arrayContaining(['llm', 'wc', 'payment', 'business', 'agent', 'info', 'dispatch', 'compliance', 'setup']),
+      expect.arrayContaining([
+        'llm',
+        'wc',
+        'payment',
+        'business',
+        'agent',
+        'info',
+        'dispatch',
+        'compliance',
+        'skills',
+        'mcp',
+        'setup',
+      ]),
     );
     const llmKeys = dto.llm?.map((d: SettingDto) => d.key) ?? [];
     expect(llmKeys).toContain('llm.provider');

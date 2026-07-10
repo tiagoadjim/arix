@@ -14,6 +14,7 @@ import {
   setReceiptMediaHash,
 } from './db/repo';
 import { reconcileReceiptAfterAmbiguousOrderUpdate } from './skills/payments';
+import { closeMcpPool } from './mcp/manager';
 
 async function reconcileReceiptState(): Promise<void> {
   const stale = await listStaleReceiptReviews();
@@ -105,6 +106,7 @@ async function main(): Promise<void> {
       await Promise.all([
         router.stop(),
         gateway.stop().catch((err) => logger.warn({ err }, 'failed to stop WhatsApp cleanly')),
+        closeMcpPool().catch((err) => logger.warn({ err }, 'failed to close MCP pool cleanly')),
       ]);
       const drained = await Promise.race([
         closed.then(() => true),

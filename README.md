@@ -1,12 +1,5 @@
 <p align="center">
-  <img src="dashboard/public/logo.svg" alt="Arix" width="96" />
-</p>
-
-<h1 align="center">Arix</h1>
-
-<p align="center">
-  Open-source AI sales agent for WooCommerce, on WhatsApp.<br/>
-  Self-hosted, multi-LLM, ready in minutes.
+  <img src="docs/assets/arix-readme-hero.webp" alt="Arix — Open-source AI sales agent for WooCommerce, on WhatsApp" width="100%" />
 </p>
 
 <p align="center">
@@ -37,7 +30,9 @@ Postgres, receipt files, and session data never leave your server.
 - **Knows your business hours** — replies are aware of your configured
   schedule and timezone.
 
-<!-- Screenshots: dashboard inbox, conversation view, and setup wizard go here. -->
+<p align="center">
+  <img src="docs/assets/arix-product-flow.webp" alt="Arix product flow: WhatsApp, live catalog, payment verification, and human handoff" width="100%" />
+</p>
 
 ## Architecture
 
@@ -152,6 +147,22 @@ independent `SETTINGS_ENCRYPTION_KEY`; they are never sent to the browser in
 plaintext. Existing installations can temporarily fall back to the legacy
 JWT-derived key while rotating.
 
+### MCP security model
+
+Arix supports remote **Streamable HTTP MCP** servers. Only administrators can
+configure them. Endpoints must use public HTTPS; private/link-local addresses,
+redirects, URL credentials and query-string secrets are rejected. Header
+values are encrypted at rest and redacted in the dashboard. After testing a
+server, an administrator must explicitly allow each tool before the
+customer-facing agent can use it (deny by default). Tools not annotated as
+read-only require a second explicit high-risk switch because any customer
+conversation may trigger enabled tools.
+
+Dashboard-configured stdio MCP is intentionally unsupported: accepting an
+arbitrary command from a web session would be remote code execution inside
+the Arix container. Use `MCP_ALLOWED_HOSTS` to enforce an exact hostname
+allowlist in stricter deployments.
+
 Any of those fields can also be **seeded from an environment variable** (see
 `env.example`, section 2). Precedence is **env > database > default**: while
 an env var is set, it wins and shows as read-only in the dashboard — useful
@@ -183,6 +194,7 @@ Only a handful of variables are env-only (no dashboard equivalent):
 | `AGENT_DEBOUNCE_MS` | `60000` | Wait after the customer's last message before replying (batches quick follow-ups). |
 | `AGENT_MAX_BUBBLES` | `3` | Max WhatsApp bubbles per reply. |
 | `AGENT_TURN_TIMEOUT_MS` | `90000` | Total budget for an agent turn across retries, backoff, and tools. |
+| `MCP_ALLOWED_HOSTS` | empty | Optional comma-separated exact allowlist for remote MCP hosts. |
 
 ## Deploying to a VPS
 
@@ -209,12 +221,17 @@ backups, and zero-downtime updates.
 
 ## Security & privacy
 
+<p align="center">
+  <img src="docs/assets/arix-self-hosted.webp" alt="Arix self-hosted infrastructure and data ownership" width="100%" />
+</p>
+
 - Everything self-hosts on your own infrastructure: Postgres, receipt files,
   and WhatsApp session data live in your Docker volumes, not a third party.
 - API keys and WooCommerce credentials are encrypted at rest
   (AES-256-GCM) and are never returned to the browser in plaintext.
 - Auth is a signed JWT cookie over your own staff table (bcrypt-hashed
-  passwords) — no external identity provider required.
+  passwords) with administrator/staff authorization — no external identity
+  provider required.
 - Set `COOKIE_SECURE=true` and serve the dashboard over HTTPS in production
   (see the VPS guide).
 - The only data that leaves your infrastructure is what's necessary for the

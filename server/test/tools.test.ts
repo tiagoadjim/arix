@@ -5,9 +5,22 @@ vi.mock('../src/logger', () => ({
   logger: { error: loggerError, warn: vi.fn(), info: vi.fn(), fatal: vi.fn() },
 }));
 
-import { toolNames, runTool } from '../src/agent/tools';
+import { getBuiltinToolNames, runTool } from '../src/agent/tools';
 import { catalogTools } from '../src/skills/catalog';
 import type { ToolContext } from '../src/types';
+
+vi.mock('../src/mcp/manager', () => ({
+  getMcpToolDefinitions: async () => [],
+  runMcpTool: async () => null,
+}));
+
+vi.mock('../src/config/runtime', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/config/runtime')>();
+  return {
+    ...actual,
+    enabledSkills: async () => ['catalog', 'orders', 'payments', 'handoff'],
+  };
+});
 
 const ctx: ToolContext = {
   conversationId: 'c1',
@@ -18,8 +31,8 @@ const ctx: ToolContext = {
 };
 
 describe('tool registry', () => {
-  it('exposes the agent’s skills', () => {
-    expect(toolNames).toEqual(
+  it('exposes the agent’s skills', async () => {
+    expect(await getBuiltinToolNames()).toEqual(
       expect.arrayContaining([
         'search_catalog',
         'view_product',

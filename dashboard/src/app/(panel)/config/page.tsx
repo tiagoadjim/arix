@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { ArrowLeftIcon } from 'lucide-react';
 import { toast } from 'sonner';
 import { api, apiErrorMessage, type SettingDto } from '@/lib/api';
@@ -24,6 +25,18 @@ import {
   initBusinessValues,
   type BusinessFormValues,
 } from '@/components/settings/business-fields';
+import {
+  SkillsFields,
+  buildSkillsUpdates,
+  initSkillsValues,
+  type SkillsFormValues,
+} from '@/components/settings/skills-fields';
+import {
+  McpFields,
+  buildMcpUpdates,
+  initMcpValues,
+  type McpFormValues,
+} from '@/components/settings/mcp-fields';
 import { WhatsAppPanel } from '@/components/settings/whatsapp-panel';
 import { StaffPanel } from '@/components/settings/staff-panel';
 import { isDirty } from '@/components/settings/settings-form-utils';
@@ -32,6 +45,7 @@ type Grouped = Record<string, SettingDto[]>;
 
 export default function SettingsPage() {
   const { t } = useT();
+  const router = useRouter();
   const [grouped, setGrouped] = useState<Grouped | null>(null);
   const [loadError, setLoadError] = useState(false);
 
@@ -46,8 +60,14 @@ export default function SettingsPage() {
   }, []);
 
   useEffect(() => {
-    void reload();
-  }, [reload]);
+    void api
+      .me()
+      .then((user) => {
+        if (user.role !== 'admin') router.replace('/');
+        else void reload();
+      })
+      .catch(() => router.replace('/login'));
+  }, [reload, router]);
 
   if (!grouped) {
     return (
@@ -82,6 +102,8 @@ export default function SettingsPage() {
           <TabsList className="min-w-max">
             <TabsTrigger value="provider">{t.settings.tabProvider}</TabsTrigger>
             <TabsTrigger value="store">{t.settings.tabStore}</TabsTrigger>
+            <TabsTrigger value="skills">{t.settings.tabSkills}</TabsTrigger>
+            <TabsTrigger value="mcp">{t.settings.tabMcp}</TabsTrigger>
             <TabsTrigger value="business">{t.settings.tabBusiness}</TabsTrigger>
             <TabsTrigger value="whatsapp">{t.settings.tabWhatsapp}</TabsTrigger>
             <TabsTrigger value="staff">{t.settings.tabStaff}</TabsTrigger>
@@ -93,6 +115,12 @@ export default function SettingsPage() {
         </TabsContent>
         <TabsContent value="store" className="pt-4">
           <StoreTab wc={grouped.wc} payment={grouped.payment} onSaved={reload} />
+        </TabsContent>
+        <TabsContent value="skills" className="pt-4">
+          <SkillsTab dtos={grouped.skills} onSaved={reload} />
+        </TabsContent>
+        <TabsContent value="mcp" className="pt-4">
+          <McpTab dtos={grouped.mcp} onSaved={reload} />
         </TabsContent>
         <TabsContent value="business" className="pt-4">
           <BusinessTab
@@ -200,6 +228,90 @@ function StoreTab({
   return (
     <div className="flex flex-col gap-4">
       <StoreFields values={values} onChange={setValues} wc={wc} payment={payment} disabled={saving} />
+      <Button onClick={() => void handleSave()} disabled={saving || !dirty} className="w-fit">
+        {saving ? t.common.saving : t.settings.saveButton}
+      </Button>
+    </div>
+  );
+}
+
+function SkillsTab({ dtos, onSaved }: { dtos?: SettingDto[]; onSaved: () => void | Promise<void> }) {
+  const { t } = useT();
+  const [initial, setInitial] = useState<SkillsFormValues>(() => initSkillsValues(dtos));
+  const [values, setValues] = useState<SkillsFormValues>(initial);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    const next = initSkillsValues(dtos);
+    setInitial(next);
+    setValues(next);
+  }, [dtos]);
+
+  const dirty = isDirty(values, initial);
+
+  async function handleSave() {
+    const updates = buildSkillsUpdates(values, dtos);
+    if (updates.length === 0) {
+      toast.info(t.common.noChanges);
+      return;
+    }
+    setSaving(true);
+    try {
+      await api.saveSettings(updates);
+      toast.success(t.settings.savedToast);
+      await onSaved();
+    } catch (err) {
+      toast.error(apiErrorMessage(err, t, t.common.error));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-4">
+      <SkillsFields values={values} onChange={setValues} dtos={dtos} disabled={saving} />
+      <Button onClick={() => void handleSave()} disabled={saving || !dirty} className="w-fit">
+        {saving ? t.common.saving : t.settings.saveButton}
+      </Button>
+    </div>
+  );
+}
+
+function McpTab({ dtos, onSaved }: { dtos?: SettingDto[]; onSaved: () => void | Promise<void> }) {
+  const { t } = useT();
+  const [initial, setInitial] = useState<McpFormValues>(() => initMcpValues(dtos));
+  const [values, setValues] = useState<McpFormValues>(initial);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    const next = initMcpValues(dtos);
+    setInitial(next);
+    setValues(next);
+  }, [dtos]);
+
+  const dirty = isDirty(values, initial);
+
+  async function handleSave() {
+    const updates = buildMcpUpdates(values, dtos);
+    if (updates.length === 0) {
+      toast.info(t.common.noChanges);
+      return;
+    }
+    setSaving(true);
+    try {
+      await api.saveSettings(updates);
+      toast.success(t.settings.savedToast);
+      await onSaved();
+    } catch (err) {
+      toast.error(apiErrorMessage(err, t, t.common.error));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-4">
+      <McpFields values={values} onChange={setValues} dtos={dtos} disabled={saving} />
       <Button onClick={() => void handleSave()} disabled={saving || !dirty} className="w-fit">
         {saving ? t.common.saving : t.settings.saveButton}
       </Button>

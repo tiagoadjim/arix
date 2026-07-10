@@ -1,7 +1,7 @@
 import type OpenAI from 'openai';
 import { getLlm, LlmRequestError, type LlmHandle } from './llm/client';
 import { buildSystemPrompt } from './prompt';
-import { toolDefinitions, runTool } from './tools';
+import { getToolDefinitions, runTool } from './tools';
 import { getGuardrails, type Guardrails } from './guardrails';
 import {
   businessProfile,
@@ -213,6 +213,10 @@ async function runAgentTurn(
     supported: handle.provider.supportsVision(handle.model),
     fallback: llmSettings.visionFallback,
   };
+  // Resolve tools once per turn (enabled built-ins + explicitly-allowed MCP).
+  const toolDefinitions = await getToolDefinitions();
+  const enabledToolNames = toolDefinitions.map((tool) => tool.function.name);
+  const catalogToolAvailable = enabledToolNames.includes('search_catalog');
 
   const messages: ChatMessage[] = [
     {
@@ -228,6 +232,7 @@ async function runAgentTurn(
         storefrontUrl: wooCfg.frontUrl || wooCfg.url,
         infoBlocks: blocks,
         complianceRules: rules,
+        enabledToolNames,
       }),
     },
     ...historyToMessages(history, ctx, guardrails, vision),
@@ -250,7 +255,7 @@ async function runAgentTurn(
       Record<string, unknown> = {
       model: handle.model,
       messages,
-      tools: toolDefinitions,
+      tools: toolDefinitions.length > 0 ? toolDefinitions : undefined,
       temperature: 0.4,
       // Generous budget: thinking models need headroom so the answer isn't
       // truncated (handled below).
@@ -268,7 +273,7 @@ async function runAgentTurn(
     // but only if the provider actually honors a forced function choice. Some
     // compat layers don't (see agent/llm/providers.ts); those rely on the
     // system-message nudge (forceCatalogNudge) alone.
-    if (forceCatalogNext) {
+    if (forceCatalogNext && catalogToolAvailable) {
       if (handle.provider.supportsForcedToolChoice) {
         body.tool_choice = { type: 'function', function: { name: 'search_catalog' } };
       }
@@ -334,7 +339,7 @@ async function runAgentTurn(
         !catalogQueried &&
         (guardrails.asksAboutCatalog(lastCustomerText) || guardrails.makesProductClaim(text));
       if (ungrounded) {
-        if (!forcedCatalog) {
+        if (catalogToolAvailable && !forcedCatalog) {
           forcedCatalog = true;
           forceCatalogNext = true;
           logger.warn(
@@ -365,6 +370,8 @@ async function runAgentTurn(
         });
         continue;
       }
+      // Log only the argument shape. Values can contain customer PII, order
+      // data, payment details, or credentials (including for MCP tools).
       logger.info(
         { tool: tc.function.name, argKeys: toolArgumentKeys(tc.function.arguments) },
         'agent tool call',

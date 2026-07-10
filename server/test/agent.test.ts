@@ -4,10 +4,26 @@ import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 // `providerCaps` lets individual tests flip provider capabilities
 // (supportsForcedToolChoice / supportsVision) to exercise the gating logic in
 // agent.ts without needing a second mock module.
-const { create, runTool, providerCaps, loggerInfo, loggerWarn, loggerError } = vi.hoisted(() => ({
+const {
+  create,
+  runTool,
+  providerCaps,
+  enabledToolDefinitions,
+  loggerInfo,
+  loggerWarn,
+  loggerError,
+} = vi.hoisted(() => ({
   create: vi.fn(),
   runTool: vi.fn(),
   providerCaps: { supportsForcedToolChoice: true, supportsVision: true },
+  enabledToolDefinitions: {
+    value: ['search_catalog', 'view_product', 'find_order', 'confirm_payment', 'handoff_to_human'].map(
+      (name) => ({
+        type: 'function' as const,
+        function: { name, description: name, parameters: { type: 'object', properties: {} } },
+      }),
+    ),
+  },
   loggerInfo: vi.fn(),
   loggerWarn: vi.fn(),
   loggerError: vi.fn(),
@@ -55,7 +71,11 @@ vi.mock('../src/agent/llm/client', () => {
   };
 });
 
-vi.mock('../src/agent/tools', () => ({ toolDefinitions: [], toolNames: [], runTool }));
+vi.mock('../src/agent/tools', () => ({
+  getToolDefinitions: async () => enabledToolDefinitions.value,
+  getBuiltinToolNames: async () => enabledToolDefinitions.value.map((tool) => tool.function.name),
+  runTool,
+}));
 
 import { runAgent, toolArgumentKeys } from '../src/agent/agent';
 import { LlmRequestError } from '../src/agent/llm/client';
@@ -79,6 +99,16 @@ beforeEach(() => {
   loggerInfo.mockReset();
   loggerWarn.mockReset();
   loggerError.mockReset();
+  enabledToolDefinitions.value = [
+    'search_catalog',
+    'view_product',
+    'find_order',
+    'confirm_payment',
+    'handoff_to_human',
+  ].map((name) => ({
+    type: 'function' as const,
+    function: { name, description: name, parameters: { type: 'object', properties: {} } },
+  }));
   providerCaps.supportsForcedToolChoice = true;
   providerCaps.supportsVision = true;
 });
@@ -279,6 +309,29 @@ describe('runAgent input/output guards', () => {
     );
     expect(reply).toContain('Elf Bar');
     expect(create).toHaveBeenCalledTimes(3);
+  });
+
+  it('does not force a catalog tool when the catalog skill is disabled', async () => {
+    enabledToolDefinitions.value = enabledToolDefinitions.value.filter(
+      (tool) => tool.function.name !== 'search_catalog' && tool.function.name !== 'view_product',
+    );
+    create.mockResolvedValueOnce({
+      choices: [
+        {
+          finish_reason: 'stop',
+          message: { role: 'assistant', content: 'Tenemos varios modelos en stock.', tool_calls: [] },
+        },
+      ],
+    });
+
+    const reply = await runAgent(ctx, catalogHistory);
+
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(create.mock.calls[0][0].tool_choice).toBeUndefined();
+    expect(runTool).not.toHaveBeenCalled();
+    expect(reply).toMatch(/chequear/);
+    const system = create.mock.calls[0][0].messages[0].content as string;
+    expect(system).toContain('Catálogo no disponible');
   });
 
   it('does not force tool_choice when the provider cannot honor a forced function choice — relies on the nudge alone', async () => {

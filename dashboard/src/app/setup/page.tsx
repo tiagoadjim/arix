@@ -29,16 +29,28 @@ import {
   initBusinessValues,
   type BusinessFormValues,
 } from '@/components/settings/business-fields';
+import {
+  SkillsFields,
+  buildSkillsUpdates,
+  initSkillsValues,
+  type SkillsFormValues,
+} from '@/components/settings/skills-fields';
+import {
+  McpFields,
+  buildMcpUpdates,
+  initMcpValues,
+  type McpFormValues,
+} from '@/components/settings/mcp-fields';
 import { WhatsAppPanel } from '@/components/settings/whatsapp-panel';
 
 type Grouped = Record<string, SettingDto[]>;
-type Step = 1 | 2 | 3 | 4 | 5 | 6 | 7;
-const TOTAL_STEPS = 6;
+type Step = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
+const TOTAL_STEPS = 8;
 
 /** Full-screen onboarding wizard, outside the `(panel)` route group (no
  * sidebar). Re-entry: if a session already exists (`needsSetup === false`)
  * we resume at step 3 with a fresh settingsGrouped() fetch — steps 1-2 are
- * done, and steps 3-6 are otherwise client-state-only (a mid-wizard refresh
+ * done, and steps 3-8 are otherwise client-state-only (a mid-wizard refresh
  * drops back to step 3, matching middleware.ts's gating contract). */
 export default function SetupPage() {
   const router = useRouter();
@@ -93,7 +105,7 @@ export default function SetupPage() {
     finishedRef.current = true;
     try {
       await api.setupComplete();
-      setStep(7);
+      setStep(9);
     } catch {
       toast.error(t.wizard.finishError);
       finishedRef.current = false;
@@ -111,7 +123,7 @@ export default function SetupPage() {
     );
   }
 
-  if (step === 7) {
+  if (step === 9) {
     return (
       <WizardChrome>
         <div className="flex flex-col items-center gap-4 py-4 text-center">
@@ -126,13 +138,15 @@ export default function SetupPage() {
     );
   }
 
-  const titles: Record<Exclude<Step, 7>, { title: string; subtitle?: string }> = {
+  const titles: Record<Exclude<Step, 9>, { title: string; subtitle?: string }> = {
     1: { title: t.wizard.welcome.title, subtitle: t.wizard.welcome.subtitle },
     2: { title: t.wizard.admin.title, subtitle: t.wizard.admin.subtitle },
     3: { title: t.wizard.provider.title, subtitle: t.wizard.provider.subtitle },
     4: { title: t.wizard.store.title, subtitle: t.wizard.store.subtitle },
-    5: { title: t.wizard.business.title, subtitle: t.wizard.business.subtitle },
-    6: { title: t.wizard.whatsapp.title, subtitle: t.wizard.whatsapp.subtitle },
+    5: { title: t.wizard.skills.title, subtitle: t.wizard.skills.subtitle },
+    6: { title: t.wizard.mcp.title, subtitle: t.wizard.mcp.subtitle },
+    7: { title: t.wizard.business.title, subtitle: t.wizard.business.subtitle },
+    8: { title: t.wizard.whatsapp.title, subtitle: t.wizard.whatsapp.subtitle },
   };
 
   return (
@@ -146,14 +160,20 @@ export default function SetupPage() {
         <StoreStep wc={grouped?.wc} payment={grouped?.payment} onNext={() => setStep(5)} onSkip={() => setStep(5)} />
       )}
       {step === 5 && (
+        <SkillsStep dtos={grouped?.skills} onNext={() => setStep(6)} onSkip={() => setStep(6)} />
+      )}
+      {step === 6 && (
+        <McpStep dtos={grouped?.mcp} onNext={() => setStep(7)} onSkip={() => setStep(7)} />
+      )}
+      {step === 7 && (
         <BusinessStep
           grouped={grouped}
           uiLanguage={uiLanguage}
           onUiLanguageChange={setUiLanguage}
-          onNext={() => setStep(6)}
+          onNext={() => setStep(8)}
         />
       )}
-      {step === 6 && <WhatsAppStep onConnected={() => void finishSetup()} onSkip={() => void finishSetup()} />}
+      {step === 8 && <WhatsAppStep onConnected={() => void finishSetup()} onSkip={() => void finishSetup()} />}
     </WizardChrome>
   );
 }
@@ -414,6 +434,88 @@ function StoreStep({
   );
 }
 
+function SkillsStep({
+  dtos,
+  onNext,
+  onSkip,
+}: {
+  dtos?: SettingDto[];
+  onNext: () => void;
+  onSkip: () => void;
+}) {
+  const { t } = useT();
+  const [values, setValues] = useState<SkillsFormValues>(() => initSkillsValues(dtos));
+  const [saving, setSaving] = useState(false);
+
+  async function handleNext() {
+    setSaving(true);
+    try {
+      const updates = buildSkillsUpdates(values, dtos);
+      if (updates.length > 0) await api.saveSettings(updates);
+      onNext();
+    } catch (err) {
+      toast.error(apiErrorMessage(err, t, t.common.error));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-5">
+      <SkillsFields values={values} onChange={setValues} dtos={dtos} disabled={saving} />
+      <div className="flex items-center justify-between">
+        <SkipLink onClick={onSkip} disabled={saving}>
+          {t.wizard.skills.skipLink}
+        </SkipLink>
+        <Button onClick={() => void handleNext()} disabled={saving}>
+          {saving ? t.common.saving : t.common.next}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function McpStep({
+  dtos,
+  onNext,
+  onSkip,
+}: {
+  dtos?: SettingDto[];
+  onNext: () => void;
+  onSkip: () => void;
+}) {
+  const { t } = useT();
+  const [values, setValues] = useState<McpFormValues>(() => initMcpValues(dtos));
+  const [saving, setSaving] = useState(false);
+
+  async function handleNext() {
+    setSaving(true);
+    try {
+      const updates = buildMcpUpdates(values, dtos);
+      if (updates.length > 0) await api.saveSettings(updates);
+      onNext();
+    } catch (err) {
+      toast.error(apiErrorMessage(err, t, t.common.error));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-5">
+      <McpFields values={values} onChange={setValues} dtos={dtos} disabled={saving} />
+      <div className="flex items-center justify-between">
+        <SkipLink onClick={onSkip} disabled={saving}>
+          {t.wizard.mcp.skipLink}
+        </SkipLink>
+        <Button onClick={() => void handleNext()} disabled={saving}>
+          {saving ? t.common.saving : t.common.next}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 function BusinessStep({
   grouped,
   uiLanguage,
@@ -444,7 +546,7 @@ function BusinessStep({
       if (updates.length > 0) await api.saveSettings(updates);
       if (uiLanguage !== locale) {
         // Soft refresh (not a hard reload) — keeps the wizard's step state so
-        // step 6 renders immediately in the newly-picked language.
+        // step 8 renders immediately in the newly-picked language.
         setLocaleCookie(uiLanguage);
         router.refresh();
       }

@@ -14,10 +14,13 @@ import {
   dispatchTemplate,
   invalidate as invalidateSettings,
   getResolvedWithMeta,
+  getResolved,
   envLockedKeys,
   setupCompleted,
   businessProfile,
   llm as llmConfig,
+  enabledSkills,
+  mcpServers,
 } from '../config/runtime';
 import { encryptSecret } from '../config/secret';
 import { PROVIDERS, type ProviderSpec } from '../agent/llm/providers';
@@ -29,6 +32,20 @@ import {
   isNoOpSecretUpdate,
   invalidSettingsValues,
 } from './settings-dto';
+import { buildSkillCatalog } from '../skills/registry';
+import { isValidEnabledSkills } from '../skills/ids';
+import {
+  invalidateMcpPool,
+  listConnectedServerIds,
+  listMcpTools,
+  testMcpServer,
+} from '../mcp/manager';
+import {
+  mergeMcpServers,
+  toMcpServerDto,
+  validateMcpServersInput,
+} from '../mcp/types';
+import { assertSafeMcpUrl } from '../mcp/network';
 import {
   orderForStaff,
   STATUS_ES,
@@ -82,6 +99,22 @@ function decodeConversationCursor(raw: unknown): repo.ConversationListCursor | n
   } catch {
     return null;
   }
+}
+
+const MCP_TEST_LIMIT = 5;
+const MCP_TEST_WINDOW_MS = 60_000;
+const mcpTestAttempts = new Map<string, { count: number; resetAt: number }>();
+
+function consumeMcpTestAttempt(userId: string): boolean {
+  const now = Date.now();
+  const current = mcpTestAttempts.get(userId);
+  if (!current || current.resetAt <= now) {
+    mcpTestAttempts.set(userId, { count: 1, resetAt: now + MCP_TEST_WINDOW_MS });
+    return true;
+  }
+  if (current.count >= MCP_TEST_LIMIT) return false;
+  current.count += 1;
+  return true;
 }
 
 /** {connected, hasQr} — the one shape /health, /api/setup/status and
@@ -618,7 +651,7 @@ export function createApiServer(deps: {
   );
 
   // ---- WhatsApp pairing status + manual restart (auth) ----
-  app.get('/api/whatsapp/status', requireAuth, (_req, res) => {
+  app.get('/api/whatsapp/status', requireAuth, requireAdmin, (_req, res) => {
     res.json(whatsappStatus(deps.gateway));
   });
 
@@ -896,21 +929,108 @@ export function createApiServer(deps: {
         res.status(400).json({ error: 'invalid_settings_values', keys: [...new Set(invalidValues)] });
         return;
       }
+      const mcpInput = validated.updates.find(({ entry }) => entry.key === 'mcp.servers');
+      if (mcpInput) {
+        const checked = validateMcpServersInput(mcpInput.raw);
+        if (!checked.ok) {
+          res.status(400).json({ error: 'invalid_mcp_config', details: checked.errors });
+          return;
+        }
+        try {
+          await Promise.all(checked.servers.map((server) => assertSafeMcpUrl(server.url)));
+        } catch {
+          res.status(400).json({ error: 'unsafe_mcp_url' });
+          return;
+        }
+      }
+      const skillsInput = validated.updates.find(({ entry }) => entry.key === 'skills.enabled');
+      if (skillsInput && !isValidEnabledSkills(skillsInput.raw)) {
+        res.status(400).json({ error: 'invalid_skills_config' });
+        return;
+      }
+      // Snapshot current values before writing so mcp.servers can merge
+      // blank env/header fields as "keep current" (see coerceForStorage).
+      const previous = await getResolved();
+      const touchedMcp = validated.updates.some(({ entry, raw }) =>
+        entry.key === 'mcp.servers' && !isNoOpSecretUpdate(entry, raw),
+      );
       const entries = validated.updates
         .filter(({ entry, raw }) => !isNoOpSecretUpdate(entry, raw))
         .map(({ entry, raw }) => {
-          const stored = coerceForStorage(entry, raw);
+          const stored = coerceForStorage(entry, raw, previous[entry.key]);
           return { key: entry.key, value: entry.secret ? encryptSecret(stored) : stored };
         });
       try {
         await repo.upsertSettings(entries);
       } finally {
         invalidateSettings();
+        if (touchedMcp) invalidateMcpPool();
       }
       await audit(req, 'settings.updated', 'settings', undefined, { keys: entries.map((entry) => entry.key) });
       publishEvent({ type: 'settings.updated' });
       deps.recoverUnanswered?.();
       res.json({ ok: true });
+    }),
+  );
+
+  // ---- skills catalog (built-in, with enable flags) ----
+  app.get(
+    '/api/skills',
+    requireAuth,
+    requireAdmin,
+    ah(async (_req, res) => {
+      const enabled = await enabledSkills();
+      res.json({ skills: buildSkillCatalog(enabled) });
+    }),
+  );
+
+  // ---- MCP servers: status + live tools + connection test ----
+  app.get(
+    '/api/mcp',
+    requireAuth,
+    requireAdmin,
+    ah(async (_req, res) => {
+      const [servers, connectedIds, tools] = await Promise.all([
+        mcpServers(),
+        listConnectedServerIds(),
+        listMcpTools(),
+      ]);
+      const connected = new Set(connectedIds);
+      res.json({
+        servers: servers.map((s) => ({
+          ...toMcpServerDto(s),
+          connected: connected.has(s.id),
+        })),
+        tools,
+      });
+    }),
+  );
+
+  app.post(
+    '/api/mcp/test',
+    requireAuth,
+    requireAdmin,
+    ah(async (req, res) => {
+      if (!consumeMcpTestAttempt(req.user!.id)) {
+        res.status(429).json({ ok: false, error: 'too_many_attempts' });
+        return;
+      }
+      const checked = validateMcpServersInput([req.body]);
+      if (!checked.ok) {
+        res.status(400).json({ ok: false, error: 'invalid_mcp_config' });
+        return;
+      }
+      const posted = checked.servers[0]!;
+      const previous = await mcpServers();
+      const cfg = mergeMcpServers([posted], previous)[0]!;
+      try {
+        await assertSafeMcpUrl(cfg.url);
+      } catch {
+        res.status(400).json({ ok: false, error: 'unsafe_mcp_url' });
+        return;
+      }
+      const result = await testMcpServer(cfg);
+      res.json(result);
     }),
   );
 

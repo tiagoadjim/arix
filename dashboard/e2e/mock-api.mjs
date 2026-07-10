@@ -241,6 +241,16 @@ async function handle(req, res) {
     return json(res, 200, { ok: true }, { 'set-cookie': 'arix_session=; Path=/; HttpOnly; Max-Age=0' });
   }
 
+  if (pathname === '/api/me' && method === 'GET') {
+    return json(res, 200, {
+      id: '33333333-3333-4333-8333-333333333333',
+      email: state.adminEmail,
+      name: 'Admin',
+      role: state.loginRole,
+      sessionVersion: 0,
+    });
+  }
+
   if (pathname === '/api/conversations' && method === 'GET') {
     return json(res, 200, { conversations: state.conversations, nextCursor: null });
   }

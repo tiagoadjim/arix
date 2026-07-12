@@ -53,7 +53,7 @@ jobs:
         env:
           SETTINGS_ENCRYPTION_KEY: ci-only-settings-encryption-key-at-least-32-characters
         run: |
-          pnpm --filter @arix/server exec node --import tsx --input-type=module <<'NODE'
+          pnpm --filter @arix/server exec node --import tsx <<'NODE'
           const { migrate, pool } = await import('./src/db/pool.ts');
           try {
             await migrate();

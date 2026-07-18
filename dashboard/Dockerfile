@@ -44,6 +44,11 @@ FROM node:24-slim AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
+# Docker sets HOSTNAME to the container id; Next's standalone server binds to
+# that value, so healthchecks and the published port on localhost would miss
+# the process. Force all interfaces instead.
+ENV HOSTNAME=0.0.0.0
+ENV PORT=3000
 
 # Standalone output tracing root is the repo root (see comment above), so it
 # nests as `dashboard/server.js` + a shared `node_modules` — both land

@@ -70,6 +70,10 @@ services:
       # this internet-facing container.
       SERVER_API_URL: http://server:3001
       AUTH_JWT_SECRET: ${AUTH_JWT_SECRET}
+      # Override the container id that Docker puts in HOSTNAME — otherwise the
+      # Next standalone server binds only to that hostname and the localhost
+      # healthcheck (and host port publish) never reach it.
+      HOSTNAME: 0.0.0.0
     restart: unless-stopped
     depends_on:
       server:

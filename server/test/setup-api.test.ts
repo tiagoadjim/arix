@@ -76,7 +76,9 @@ const AGENT_STAFF = {
   role: 'agent' as const,
   session_version: 3,
 };
-const SETUP_TOKEN = 'test-setup-token-at-least-32-characters-long';
+// Must match config.SETUP_TOKEN. setup-env.ts seeds a default via ??=, but CI
+// (and any other host) may already set SETUP_TOKEN — use the live env value.
+const SETUP_TOKEN = process.env.SETUP_TOKEN!;
 
 async function authCookie(staff: typeof STAFF | typeof AGENT_STAFF = STAFF): Promise<string> {
   const token = await signSession(staff);

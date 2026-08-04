@@ -16,7 +16,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "baileys": "7.0.0-rc13",
     "bcryptjs": "^2.4.3",
     "cookie-parser": "^1.4.7",

@@ -47,6 +47,10 @@ function groupedSettings() {
       setting('payment.tolerance', 'payment', 1, 'number'),
       setting('payment.auto_confirm', 'payment', false, 'boolean'),
     ],
+    setup: [
+      setting('setup.completed', 'setup', false, 'boolean'),
+      setting('setup.step', 'setup', 0, 'number'),
+    ],
     business: [
       setting('business.name', 'business', 'Demo Store'),
       setting('business.timezone', 'business', 'America/Argentina/Buenos_Aires'),
@@ -118,6 +122,10 @@ function freshState(overrides = {}) {
     messages: [message()],
     settings: groupedSettings(),
     lastSettingsUpdate: [],
+    setupStep: 0,
+    wooAuthMode: 'manual',
+    wooAuthStatus: 'delivered',
+    scanTicks: 0,
     ...overrides,
   };
 }
@@ -193,8 +201,101 @@ async function handle(req, res) {
     return json(res, 200, {
       needsSetup: state.needsSetup,
       setupCompleted: state.setupCompleted,
+      step: state.setupStep,
       whatsapp: { connected: false, hasQr: true },
     });
+  }
+
+  if (pathname === '/api/setup/test/llm' && method === 'POST') {
+    return json(res, 200, { ok: true, model: 'gpt-4.1-mini', vision: true });
+  }
+
+  if (pathname === '/api/setup/test/woocommerce' && method === 'POST') {
+    return json(res, 200, { ok: true, sampleProductName: 'Demo Product' });
+  }
+
+  // ---- one-click store connection ----
+  // `wooAuthMode` drives which branch the wizard renders. 'manual' is the
+  // default because it is the branch a local install always takes, and the one
+  // a shop owner is most likely to see.
+  if (pathname === '/api/setup/woocommerce/authorize' && method === 'POST') {
+    const body = await readJson(req);
+    const storeBase = /^https?:\/\//.test(body.url ?? '') ? body.url.replace(/\/$/, '') : `https://${body.url ?? ''}`;
+    const createKeyUrl = `${storeBase}/wp-admin/admin.php?page=wc-settings&tab=advanced&section=keys&create-key=1`;
+    const probe = { reachable: true, wordpress: true, woocommerce: true, prettyPermalinks: true, name: 'Demo Store' };
+    if (state.wooAuthMode === 'oauth') {
+      return json(res, 200, {
+        mode: 'oauth',
+        storeBase,
+        probe,
+        createKeyUrl,
+        requestId: '44444444-4444-4444-8444-444444444444',
+        authorizeUrl: `${storeBase}/wc-auth/v1/authorize`,
+        expiresInSeconds: 600,
+      });
+    }
+    return json(res, 200, { mode: 'manual', reason: 'no_public_https', storeBase, probe, createKeyUrl });
+  }
+
+  if (pathname.startsWith('/api/setup/woocommerce/authorize/') && pathname.endsWith('/status') && method === 'GET') {
+    return json(res, 200, { status: state.wooAuthStatus ?? 'delivered' });
+  }
+
+  if (pathname.startsWith('/api/setup/woocommerce/authorize/') && pathname.endsWith('/claim') && method === 'POST') {
+    return json(res, 200, { ok: true, storeBase: 'https://shop.example.com', sampleProductName: 'Demo Product' });
+  }
+
+  // ---- site scan ----
+  if (pathname === '/api/setup/site-scan' && method === 'POST') {
+    state.scanTicks = 0;
+    return json(res, 202, { id: '55555555-5555-4555-8555-555555555555' });
+  }
+
+  if (pathname.startsWith('/api/setup/site-scan/') && method === 'GET') {
+    // One crawling tick, then the result — enough for the UI to render both
+    // states without making the test wait on a real timer.
+    state.scanTicks = (state.scanTicks ?? 0) + 1;
+    if (state.scanTicks < 2) {
+      return json(res, 200, {
+        id: '55555555-5555-4555-8555-555555555555',
+        state: 'crawling',
+        root: 'https://shop.example.com',
+        progress: { pagesFound: 4, pagesFetched: 1, maxPages: 25, currentUrl: 'https://shop.example.com/shipping' },
+        result: null,
+        error: null,
+      });
+    }
+    return json(res, 200, {
+      id: '55555555-5555-4555-8555-555555555555',
+      state: 'done',
+      root: 'https://shop.example.com',
+      progress: { pagesFound: 4, pagesFetched: 4, maxPages: 25, currentUrl: null },
+      result: {
+        agentTone: 'Friendly and direct.',
+        pagesRead: ['https://shop.example.com/', 'https://shop.example.com/shipping'],
+        fields: [
+          {
+            key: 'info.shipping',
+            value: 'We ship nationwide in 3 to 5 business days.',
+            sources: ['https://shop.example.com/shipping'],
+            confidence: 0.9,
+            warnings: [],
+          },
+          {
+            key: 'info.payment',
+            value: 'Pay by bank transfer to account 000111222333444.',
+            sources: ['https://shop.example.com/shipping'],
+            confidence: 0.4,
+            warnings: ['ungrounded_details'],
+          },
+        ],
+      },
+      error: null,
+    });
+  }
+
+  if (pathname.startsWith('/api/setup/site-scan/') && method === 'DELETE') {
+    return json(res, 200, { ok: true });
   }
 
   if (pathname === '/api/setup/admin' && method === 'POST') {

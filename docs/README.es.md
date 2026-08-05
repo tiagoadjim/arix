@@ -109,12 +109,11 @@ los secretos y la contraseña de la base de datos a mano.
    `127.0.0.1`; no amplíes ese bind ni lo publiques antes de crear el primer
    administrador.
 
-3. **Abrí `http://localhost:3000`.** Vas a caer en el wizard de
-   configuración. Pegá el `SETUP_TOKEN` de `.env` para crear el único admin
-   de bootstrap; después elegí y probá un proveedor de
-   IA, conectá WooCommerce, completá el perfil del negocio y escaneá el QR
-   de WhatsApp — ahí mismo en el navegador, sin necesidad de mirar logs. Si
-   un QR expira, hay un botón para regenerarlo.
+3. **Abrí `http://localhost:3000`.** El wizard se abre solo la primera vez que
+   entrás a Arix, sea en un dominio o en local. Son cinco pantallas en lenguaje
+   común: creás tu cuenta con el `SETUP_TOKEN` de `.env`, conectás tu tienda,
+   elegís y probás un proveedor de IA, dejás que Arix lea tu web, y escaneás el
+   QR de WhatsApp. Podés cortar y volver: retoma donde lo dejaste.
 
 Listo — Arix está en producción. El CLI de emergencia (`create-staff`, para
 cuando el wizard no está disponible) está documentado en
@@ -145,6 +144,36 @@ pnpm lint           # ESLint; warnings fallan localmente y en CI
 pnpm build          # builds de producción, server y dashboard
 pnpm audit:prod     # auditoría de dependencias de producción
 ```
+
+## Conectar tu tienda
+
+Dos caminos, y Arix elige el que realmente puede funcionar:
+
+- **Un clic.** Escribís la dirección de tu tienda, aprobás la conexión dentro de
+  tu propio WordPress, y WooCommerce le manda las claves a Arix solo. Necesita
+  que Arix sea alcanzable en una dirección `https://` pública, porque
+  WooCommerce se niega a entregar credenciales a cualquier otro lado — definí
+  `PUBLIC_URL` con la dirección donde servís Arix.
+- **Copiar las claves.** En una instalación local, o en una tienda con enlaces
+  simples, el wizard lo detecta de entrada y cambia a un flujo manual guiado: un
+  link directo a la pantalla de creación de claves de tu tienda, y un campo
+  donde pegás lo que sea que te muestre WooCommerce — él solo extrae la clave y
+  el secreto.
+
+## Aprender de tu web
+
+En el paso "Tu web", Arix lee unas 25 páginas de tu propio sitio — envíos,
+pagos, devoluciones, preguntas frecuentes, contacto — y propone qué contarle a
+tus clientes sobre cada tema. Las páginas de producto las saltea a propósito:
+precios y stock salen de la API de WooCommerce en vivo, así que una copia
+crawleada solo quedaría vieja.
+
+No se guarda nada automáticamente. Cada propuesta se muestra al lado del valor
+actual, con las páginas de donde salió, y vos aceptás, editás o descartás una
+por una. Esa revisión es deliberada: una web es entrada no confiable, así que
+una propuesta que parece una instrucción, o que contiene un link o un número de
+cuenta que no aparece en tu sitio, queda marcada para que la mires bien antes de
+quedártela.
 
 ## Configuración
 
@@ -198,6 +227,7 @@ el dashboard):
 | `ALLOW_INSECURE_HTTP` | `false` | Opt-in explícito para HTTP; mantenelo apagado en integraciones públicas. |
 | `LOG_LEVEL` | `info` | Nivel de log de pino. |
 | `COOKIE_SECURE` | `false` | Poné `true` cuando sirvas el dashboard sobre HTTPS (ver la guía de VPS). |
+| `PUBLIC_URL` | — | Dirección HTTPS pública donde responde este deploy. Habilita la conexión de un clic con WooCommerce; sin ella el wizard usa el flujo manual de claves. |
 | `WA_ACCOUNT_ID` | `default` | Namespacea la sesión de WhatsApp guardada en Postgres. |
 | `WA_MARK_ONLINE` | `false` | Si WhatsApp muestra la cuenta como en línea. |
 | `WA_QR_TERMINAL` | `false` | Imprime el QR en logs; dejalo apagado y usá el dashboard autenticado. |

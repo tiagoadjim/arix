@@ -6,6 +6,28 @@ interface SetupStatus {
   setupCompleted: boolean;
 }
 
+/** Cookie the wizard's "continue later" link sets, so postponing setup is not
+ * undone by the auto-launch redirect on the very next navigation. */
+const SETUP_SNOOZE_COOKIE = 'arix_setup_snooze';
+
+/**
+ * Memo for the *completed* answer only.
+ *
+ * `setup.completed` is monotonic: once true it never goes back. Caching that
+ * one result keeps a per-navigation fetch off the hot path forever after
+ * onboarding, while an unfinished install still re-checks every time — so
+ * finishing the wizard takes effect on the next navigation, not in a minute.
+ */
+let setupCompletedMemo = false;
+
+async function isSetupCompleted(): Promise<boolean | null> {
+  if (setupCompletedMemo) return true;
+  const status = await fetchSetupStatus();
+  if (!status) return null;
+  if (status.setupCompleted) setupCompletedMemo = true;
+  return status.setupCompleted;
+}
+
 /** Server-side fetch of the public `GET /api/setup/status` — same target
  * next.config.mjs's dev-time rewrite proxies to (SERVER_API_URL, defaulting
  * to the local server port). Never throws: a network failure or non-2xx
@@ -63,6 +85,19 @@ export async function middleware(request: NextRequest) {
 
   if (authed && isLogin && !isExpiredLogin) {
     return NextResponse.redirect(new URL('/', request.url));
+  }
+
+  // Auto-launch: opening Arix for the first time lands on the wizard, whether
+  // that is a domain or a local install. Scoped to the root path on purpose —
+  // "opening the system" is exactly what a visit to `/` means, and an
+  // administrator who deliberately navigates to a conversation or to Settings
+  // should not be bounced out of it. The panel shows a banner instead.
+  if (authed && session.role === 'admin' && pathname === '/' && !request.cookies.has(SETUP_SNOOZE_COOKIE)) {
+    // Null (the status fetch failed) falls through: never trap someone in a
+    // redirect because the API was briefly unreachable.
+    if ((await isSetupCompleted()) === false) {
+      return NextResponse.redirect(new URL('/setup', request.url));
+    }
   }
 
   if (!authed && !isLogin) {

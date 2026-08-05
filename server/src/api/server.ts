@@ -10,6 +10,22 @@ import { pool } from '../db/pool';
 import { readReceiptImage } from '../storage';
 import { normalizePhone, woo, type WcOrder } from '../integrations/woocommerce';
 import {
+  buildWooAuthorizeUrl,
+  hasDeliveredCredentials,
+  hashAuthState,
+  isReachablePublicOrigin,
+  mintAuthState,
+  normalizeStoreUrl,
+  parseWooCallbackBody,
+  probeWooCredentials,
+  probeWooStore,
+  resolvePublicOrigin,
+  storeDeliveredCredentials,
+  takeDeliveredCredentials,
+  wooCreateKeyUrl,
+  WOO_AUTH_TTL_MS,
+} from '../integrations/woocommerce-auth';
+import {
   woo as wooConfig,
   dispatchTemplate,
   invalidate as invalidateSettings,
@@ -17,6 +33,7 @@ import {
   getResolved,
   envLockedKeys,
   setupCompleted,
+  setupStep,
   businessProfile,
   llm as llmConfig,
   enabledSkills,
@@ -47,6 +64,12 @@ import {
 } from '../mcp/types';
 import { assertSafeMcpUrl } from '../mcp/network';
 import {
+  cancelScanJob,
+  getScanJob,
+  ScanAlreadyRunningError,
+  startScanJob,
+} from '../onboarding/job';
+import {
   orderForStaff,
   STATUS_ES,
   buildDeliveryMessage,
@@ -62,9 +85,9 @@ import { SESSION_COOKIE, signSession, verifySession, type SessionUser } from './
 import type { WhatsAppGateway } from '../whatsapp/socket';
 import { stableWhatsAppMessageId } from '../whatsapp/socket';
 import {
+  assertSafeRemoteUrl,
   isPrivateOrReservedIp,
   parseRemoteUrl,
-  readTextLimited,
   safeFetch,
   UnsafeRemoteUrlError,
 } from '../net/safe-fetch';
@@ -100,6 +123,14 @@ function decodeConversationCursor(raw: unknown): repo.ConversationListCursor | n
     return null;
   }
 }
+
+// One-click store connection. The mint side is per-administrator; the callback
+// side is per-IP because WooCommerce arrives with no identity at all.
+const wooAuthorizeLimiter = new BoundedRateLimiter(5, 10 * 60_000);
+const wooCallbackLimiter = new BoundedRateLimiter(20, 10 * 60_000);
+// A scan costs a burst of outbound requests to someone else's site plus one LLM
+// call, so it is metered even though only administrators can start one.
+const siteScanLimiter = new BoundedRateLimiter(5, 15 * 60_000);
 
 const MCP_TEST_LIMIT = 5;
 const MCP_TEST_WINDOW_MS = 60_000;
@@ -144,14 +175,6 @@ function safeLlmTestError(err: unknown): string {
   if (typeof status === 'number' && status >= 500) return 'The provider API is currently unavailable.';
   if (err instanceof Error && /timeout/i.test(err.message)) return 'Request timed out.';
   return 'Could not connect to the LLM provider with these credentials.';
-}
-
-/** Maps a WooCommerce credential-test HTTP status to a safe user-facing message. */
-function safeWooTestError(status: number): string {
-  if (status === 401 || status === 403) return 'Invalid consumer key/secret, or REST API access is disabled.';
-  if (status === 404) return 'WooCommerce REST API not found at this URL — check the store URL.';
-  if (status >= 500) return 'The store is currently unavailable.';
-  return `The store rejected the request (HTTP ${status}).`;
 }
 
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
@@ -300,10 +323,18 @@ export function createApiServer(deps: {
   app.get(
     '/api/setup/status',
     ah(async (_req, res) => {
-      const [staffCount, completed] = await Promise.all([repo.countStaff(), setupCompleted()]);
+      const [staffCount, completed, step] = await Promise.all([
+        repo.countStaff(),
+        setupCompleted(),
+        setupStep(),
+      ]);
       res.json({
         needsSetup: staffCount === 0,
         setupCompleted: completed,
+        // Resume cursor for the wizard. Safe to expose without auth: it is a
+        // small integer that reveals nothing beyond "onboarding got this far",
+        // and the middleware already needs it before a session exists.
+        step,
         whatsapp: whatsappStatus(deps.gateway),
       });
     }),
@@ -616,38 +647,346 @@ export function createApiServer(deps: {
         return;
       }
 
-      const auth = 'Basic ' + Buffer.from(`${consumerKey}:${consumerSecret}`).toString('base64');
+      // Shared with the one-click claim so both paths agree on what
+      // "connected" means, down to the error wording.
+      const probe = await probeWooCredentials(base.toString(), consumerKey, consumerSecret);
+      if (!probe.ok) {
+        logger.warn('setup: WooCommerce credential test failed');
+        await audit(req, 'integration.test_woocommerce', 'woocommerce', base.origin, { ok: false });
+        res.json({ ok: false, error: probe.error });
+        return;
+      }
+      await audit(req, 'integration.test_woocommerce', 'woocommerce', base.origin, { ok: true });
+      res.json({ ok: true, sampleProductName: probe.sampleProductName ?? null });
+    }),
+  );
+
+  // ---- setup wizard: one-click WooCommerce connection ----
+  //
+  // Three routes, and the asymmetry between them is the whole security story:
+  // an administrator mints a single-use request, WooCommerce redeems it from
+  // its own server with no session of any kind, and the administrator polls
+  // for the outcome.
+
+  app.post(
+    '/api/setup/woocommerce/authorize',
+    requireAuth,
+    requireAdmin,
+    ah(async (req, res) => {
+      const user = req.user!;
+      const limit = wooAuthorizeLimiter.consume(user.id);
+      if (!limit.allowed) {
+        res.setHeader('Retry-After', String(limit.retryAfterSeconds));
+        res.status(429).json({ error: 'rate_limited' });
+        return;
+      }
+
+      const rawUrl = boundedString(req.body?.url, 2_048);
+      if (!rawUrl) {
+        res.status(400).json({ error: 'invalid_store_url' });
+        return;
+      }
+
+      let storeBase: string;
       try {
-        const target = new URL('/wp-json/wc/v3/products', base);
-        target.searchParams.set('per_page', '1');
-        const resp = await safeFetch(target, {
-          headers: { Authorization: auth, Accept: 'application/json' },
-        }, { timeoutMs: 15_000 });
-        if (!resp.ok) {
-          await resp.body?.cancel().catch(() => {});
-          await audit(req, 'integration.test_woocommerce', 'woocommerce', base.origin, { ok: false, status: resp.status });
-          res.json({ ok: false, error: safeWooTestError(resp.status) });
+        storeBase = normalizeStoreUrl(rawUrl);
+      } catch {
+        res.status(400).json({ error: 'invalid_store_url' });
+        return;
+      }
+      try {
+        // Exactly the policy every other outbound call obeys — no separate,
+        // weaker validation just because this URL is only used to build a link.
+        await assertSafeRemoteUrl(storeBase);
+      } catch (err) {
+        if (!(err instanceof UnsafeRemoteUrlError)) throw err;
+        res.status(400).json({ error: 'unsafe_store_url' });
+        return;
+      }
+
+      // An env-seeded credential always wins over anything written to the
+      // database (env > DB > default), so completing the flow would appear to
+      // work and change nothing. Say so instead.
+      // Present in every response: the wizard always offers "I'd rather paste
+      // the keys myself", so the deep link has to exist even on the happy path.
+      const createKeyUrl = wooCreateKeyUrl(storeBase);
+
+      const locked = envLockedKeys();
+      if (['wc.url', 'wc.consumer_key', 'wc.consumer_secret'].some((key) => locked.includes(key))) {
+        res.json({ mode: 'env_locked', storeBase, createKeyUrl });
+        return;
+      }
+
+      const probe = await probeWooStore(storeBase);
+      const publicOrigin = resolvePublicOrigin({
+        forwardedProto: req.header('x-forwarded-proto'),
+        forwardedHost: req.header('x-forwarded-host'),
+      });
+      const reachable = publicOrigin ? await isReachablePublicOrigin(publicOrigin) : false;
+
+      // Every reason the one-click path cannot work, decided here rather than
+      // discovered by the shop owner on a WordPress error page.
+      if (!publicOrigin || !reachable) {
+        res.json({ mode: 'manual', reason: 'no_public_https', storeBase, probe, createKeyUrl });
+        return;
+      }
+      if (!probe.prettyPermalinks && probe.wordpress) {
+        // The auth endpoint is a rewrite rule; with plain permalinks it 404s.
+        res.json({ mode: 'manual', reason: 'plain_permalinks', storeBase, probe, createKeyUrl });
+        return;
+      }
+
+      const { state, stateHash } = mintAuthState();
+      const requestId = await repo.createSetupAuthRequest({
+        provider: 'woocommerce',
+        stateHash,
+        storeOrigin: storeBase,
+        createdBy: user.id,
+        ttlMs: WOO_AUTH_TTL_MS,
+      });
+      await audit(req, 'integration.woocommerce_authorize_started', 'woocommerce', storeBase, {
+        requestId,
+      });
+      res.json({
+        mode: 'oauth',
+        storeBase,
+        probe,
+        requestId,
+        createKeyUrl,
+        authorizeUrl: buildWooAuthorizeUrl({ storeBase, publicOrigin, requestId, state }),
+        expiresInSeconds: Math.floor(WOO_AUTH_TTL_MS / 1000),
+      });
+    }),
+  );
+
+  app.get(
+    '/api/setup/woocommerce/authorize/:requestId/status',
+    requireAuth,
+    requireAdmin,
+    ah(async (req, res) => {
+      const requestId = req.params.requestId;
+      if (!isUuid(requestId)) {
+        res.status(400).json({ error: 'invalid_request_id' });
+        return;
+      }
+      const status = await repo.getSetupAuthRequestStatus(requestId);
+      if (!status) {
+        res.status(404).json({ error: 'not_found' });
+        return;
+      }
+      res.json({
+        status: status.connected
+          ? 'connected'
+          : hasDeliveredCredentials(requestId)
+            ? 'delivered'
+            : status.expired
+              ? 'expired'
+              : 'pending',
+      });
+    }),
+  );
+
+  /**
+   * Second half of the handshake: the administrator's own session claims what
+   * the store delivered. This is where the credentials are verified and saved —
+   * never in the unauthenticated callback.
+   */
+  app.post(
+    '/api/setup/woocommerce/authorize/:requestId/claim',
+    requireAuth,
+    requireAdmin,
+    ah(async (req, res) => {
+      const requestId = req.params.requestId;
+      if (!isUuid(requestId)) {
+        res.status(400).json({ error: 'invalid_request_id' });
+        return;
+      }
+      const status = await repo.getSetupAuthRequestStatus(requestId);
+      if (!status) {
+        res.status(404).json({ error: 'not_found' });
+        return;
+      }
+      const pending = takeDeliveredCredentials(requestId);
+      if (!pending) {
+        res.status(409).json({ error: 'woo_auth_not_delivered' });
+        return;
+      }
+
+      // Verify before persisting: a key that cannot read the catalog would
+      // otherwise show as "connected" and fail on the first customer question.
+      const probe = await probeWooCredentials(pending.storeBase, pending.consumerKey, pending.consumerSecret);
+      if (!probe.ok) {
+        await audit(req, 'integration.woocommerce_claim_rejected', 'woocommerce', pending.storeBase);
+        res.json({ ok: false, error: probe.error });
+        return;
+      }
+
+      await repo.upsertSettings([
+        { key: 'wc.url', value: pending.storeBase },
+        { key: 'wc.consumer_key', value: encryptSecret(pending.consumerKey) },
+        { key: 'wc.consumer_secret', value: encryptSecret(pending.consumerSecret) },
+      ]);
+      invalidateSettings();
+      await repo.markSetupAuthRequestConnected(requestId);
+      await audit(req, 'integration.woocommerce_connected', 'woocommerce', pending.storeBase, { requestId });
+      publishEvent({ type: 'settings.updated' });
+      deps.recoverUnanswered?.();
+      // Never echoes the credentials back — only proof they work.
+      res.json({ ok: true, storeBase: pending.storeBase, sampleProductName: probe.sampleProductName ?? null });
+    }),
+  );
+
+  /**
+   * WooCommerce's server posts here. It cannot carry a session cookie, so the
+   * one-time `state` in the path IS the authorization — minted by an admin,
+   * stored only as a digest, redeemable once, and expiring in minutes.
+   *
+   * `sameOriginGuard` lets this through because `wp_safe_remote_post` sends no
+   * Origin header; a browser-driven forgery would carry one and be rejected.
+   *
+   * It must answer 2xx quickly: WooCommerce deletes the key it just generated
+   * if this POST fails.
+   */
+  app.post(
+    '/api/integrations/woocommerce/callback/:state',
+    ah(async (req, res) => {
+      const limit = wooCallbackLimiter.consume(hashIp(req));
+      if (!limit.allowed) {
+        res.setHeader('Retry-After', String(limit.retryAfterSeconds));
+        res.status(429).json({ error: 'rate_limited' });
+        return;
+      }
+
+      const state = req.params.state;
+      if (typeof state !== 'string' || !/^[a-f0-9]{64}$/.test(state)) {
+        res.status(404).json({ error: 'not_found' });
+        return;
+      }
+
+      const request = await repo.consumeSetupAuthRequest('woocommerce', hashAuthState(state));
+      if (!request) {
+        // Unknown, expired or already redeemed all look identical from outside.
+        logger.warn('woocommerce callback: no redeemable authorization request');
+        res.status(404).json({ error: 'not_found' });
+        return;
+      }
+
+      const credentials = parseWooCallbackBody(req.body, request.id);
+      if (!credentials) {
+        logger.warn({ requestId: request.id }, 'woocommerce callback: rejected payload');
+        res.status(400).json({ error: 'invalid_payload' });
+        return;
+      }
+
+      // Held in memory for the administrator to claim; nothing is persisted
+      // here. The store URL comes from the row WE created, never from the body.
+      storeDeliveredCredentials(request.id, request.store_origin, credentials);
+      await repo.insertAuditEvent({
+        // No session on this request, so the administrator who minted it is the
+        // actor of record.
+        actorId: request.created_by,
+        action: 'integration.woocommerce_callback_received',
+        targetType: 'woocommerce',
+        targetId: request.store_origin,
+        requestId: (req as AuthedRequest).requestId ?? null,
+        ipHash: hashIp(req),
+        metadata: { requestId: request.id },
+      });
+      res.json({ success: true });
+    }),
+  );
+
+  // ---- setup wizard: read the store's own website ----
+  //
+  // Produces SUGGESTIONS only. Nothing here writes a setting: the wizard shows
+  // every proposed value beside the current one and the administrator accepts
+  // them field by field through the ordinary PUT /api/settings path. That
+  // review is the containment boundary for the untrusted HTML this reads.
+
+  app.post(
+    '/api/setup/site-scan',
+    requireAuth,
+    requireAdmin,
+    ah(async (req, res) => {
+      const user = req.user!;
+      const limit = siteScanLimiter.consume(user.id);
+      if (!limit.allowed) {
+        res.setHeader('Retry-After', String(limit.retryAfterSeconds));
+        res.status(429).json({ error: 'rate_limited' });
+        return;
+      }
+
+      // The scan runs through the configured provider, so an unconfigured
+      // install gets a clear answer instead of a job that fails a minute later.
+      const llmSettings = await llmConfig();
+      if (!llmSettings.apiKey.trim()) {
+        res.status(409).json({ error: 'llm_not_configured' });
+        return;
+      }
+
+      const rawUrl = boundedString(req.body?.url, 2_048);
+      if (!rawUrl) {
+        res.status(400).json({ error: 'invalid_store_url' });
+        return;
+      }
+      let root: string;
+      try {
+        root = normalizeStoreUrl(rawUrl);
+        await assertSafeRemoteUrl(root);
+      } catch (err) {
+        if (err instanceof UnsafeRemoteUrlError) {
+          res.status(400).json({ error: 'unsafe_store_url' });
           return;
         }
-        const data = JSON.parse(await readTextLimited(resp, 1_000_000)) as unknown;
-        const products = Array.isArray(data) ? (data as Array<{ name?: unknown }>) : [];
-        await audit(req, 'integration.test_woocommerce', 'woocommerce', base.origin, { ok: true });
-        res.json({ ok: true, sampleProductName: typeof products[0]?.name === 'string' ? products[0].name : null });
+        res.status(400).json({ error: 'invalid_store_url' });
+        return;
+      }
+
+      try {
+        const job = startScanJob({ root, startedBy: user.id });
+        await audit(req, 'onboarding.site_scan_started', 'site_scan', job.id, { root });
+        res.status(202).json({ id: job.id });
       } catch (err) {
-        const timedOut = err instanceof Error && err.name === 'AbortError';
-        const unsafe = err instanceof UnsafeRemoteUrlError;
-        logger.warn({ errorType: err instanceof Error ? err.name : typeof err }, 'setup: WooCommerce credential test failed');
-        await audit(req, 'integration.test_woocommerce', 'woocommerce', base.origin, { ok: false, unsafe });
-        res.json({
-          ok: false,
-          error: unsafe
-            ? 'This URL is not allowed by the server network policy.'
-            : timedOut
-              ? 'Request timed out.'
-              : 'Could not connect to the WooCommerce store with these credentials.',
-        });
+        if (err instanceof ScanAlreadyRunningError) {
+          res.status(409).json({ error: 'scan_already_running', id: err.jobId });
+          return;
+        }
+        throw err;
       }
     }),
+  );
+
+  app.get(
+    '/api/setup/site-scan/:scanId',
+    requireAuth,
+    requireAdmin,
+    (req, res) => {
+      const scanId = req.params.scanId;
+      if (!isUuid(scanId)) {
+        res.status(400).json({ error: 'invalid_scan_id' });
+        return;
+      }
+      const job = getScanJob(scanId);
+      if (!job) {
+        res.status(404).json({ error: 'scan_not_found' });
+        return;
+      }
+      res.json(job);
+    },
+  );
+
+  app.delete(
+    '/api/setup/site-scan/:scanId',
+    requireAuth,
+    requireAdmin,
+    (req, res) => {
+      const scanId = req.params.scanId;
+      if (!isUuid(scanId)) {
+        res.status(400).json({ error: 'invalid_scan_id' });
+        return;
+      }
+      res.json({ ok: cancelScanJob(scanId, (req as AuthedRequest).user!.id) });
+    },
   );
 
   // ---- WhatsApp pairing status + manual restart (auth) ----

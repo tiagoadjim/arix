@@ -112,6 +112,14 @@ const schema = z.object({
   // Set true when serving the dashboard over HTTPS (recommended in production).
   COOKIE_SECURE: bool(false),
 
+  // Public origin this deployment is reachable at, e.g. https://arix.example.com.
+  // Only used to build URLs a THIRD PARTY has to call back into — today that is
+  // WooCommerce's authentication endpoint, which requires an HTTPS callback it
+  // can actually reach. Leave unset behind a proxy that sends X-Forwarded-*
+  // (TRUST_PROXY), and unset entirely for localhost installs: the one-click
+  // store connection then degrades to the manual key flow on purpose.
+  PUBLIC_URL: z.string().url().optional(),
+
   // Server API
   PORT: boundedNum(3001, 1, 65_535),
   // Trust exactly one reverse-proxy hop for req.ip/X-Forwarded-For. Keep false

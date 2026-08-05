@@ -32,6 +32,14 @@ Edit `.env` and set at minimum:
   HTTPS; the session cookie won't be sent over plain HTTP otherwise (browsers
   reject `Secure` cookies on non-HTTPS origins by design — this isn't
   optional in production).
+- `PUBLIC_URL=https://your-domain` — the address you serve Arix on. Set it and
+  connecting a WooCommerce store becomes a single click: the store owner
+  approves inside their own WordPress and the API keys are delivered straight
+  back. WooCommerce refuses to send credentials to anything that is not a
+  publicly reachable HTTPS address, so without this the wizard falls back to
+  its (equally complete) manual key flow. Deriving it from `X-Forwarded-*`
+  works when Caddy forwards them, but setting it explicitly removes any
+  dependency on proxy header handling.
 
 Everything else (LLM provider, WooCommerce credentials, business profile) is
 configured from the dashboard's setup wizard after first boot — see the main

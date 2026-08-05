@@ -101,12 +101,12 @@ password need manual configuration.
    `127.0.0.1`; do not widen that binding or publish it before creating the
    first administrator.
 
-3. **Open `http://localhost:3000`.** You'll land on the setup wizard. Paste
-   the `SETUP_TOKEN` from `.env` to create the one and only bootstrap admin,
-   then pick and test an AI provider, connect
-   WooCommerce, fill in your business profile, and scan the WhatsApp QR code
-   — right there in the browser, no log-scanning required. If a QR expires,
-   there's a regenerate button.
+3. **Open `http://localhost:3000`.** The setup wizard opens by itself the
+   first time Arix is opened, on a domain or locally. It walks through five
+   screens in plain language: create your account with the `SETUP_TOKEN` from
+   `.env`, connect your store, pick and verify an AI provider, let Arix read
+   your website, and scan the WhatsApp QR code. You can stop and come back —
+   it resumes where you left off.
 
 That's it — Arix is live. The break-glass CLI (`create-staff`, for when the
 wizard isn't reachable) is documented in [`CONTRIBUTING.md`](CONTRIBUTING.md).
@@ -136,6 +136,33 @@ pnpm lint           # ESLint; warnings fail locally and in CI
 pnpm build          # production builds, server + dashboard
 pnpm audit:prod     # production dependency audit
 ```
+
+## Connecting your store
+
+Two ways, and Arix picks the one that can actually work:
+
+- **One click.** Type your store address, approve the connection inside your own
+  WordPress, and WooCommerce sends the API keys straight back. This needs Arix
+  to be reachable at a public `https://` address, because WooCommerce refuses to
+  deliver credentials anywhere else — set `PUBLIC_URL` to the address you serve
+  Arix on.
+- **Copy the keys.** On a local install, or a store using plain permalinks, the
+  wizard detects that up front and switches to a guided manual flow: a direct
+  link to your store's key-creation screen, and a box where you paste whatever
+  WooCommerce shows you — it picks out the key and secret itself.
+
+## Learning from your website
+
+On the "Your website" step, Arix reads about 25 pages of your own site —
+shipping, payment, returns, FAQ, contact — and proposes what to tell customers
+about each. Product pages are skipped on purpose: prices and stock come from the
+WooCommerce API live, so a crawled copy would only go stale.
+
+Nothing is saved automatically. Every suggestion is shown beside the current
+value with the pages it came from, and you accept, edit or discard each one.
+That review is deliberate: a website is untrusted input, so a suggestion that
+looks like an instruction, or that contains a link or account number not found
+on your site, is flagged for a closer look before you can keep it.
 
 ## Configuration
 
@@ -187,6 +214,7 @@ Only a handful of variables are env-only (no dashboard equivalent):
 | `ALLOW_INSECURE_HTTP` | `false` | Explicit opt-in for HTTP; keep disabled for public integrations. |
 | `LOG_LEVEL` | `info` | pino log level. |
 | `COOKIE_SECURE` | `false` | Set `true` when serving the dashboard over HTTPS (see the VPS guide). |
+| `PUBLIC_URL` | — | Public HTTPS address this deployment answers at. Enables WooCommerce's one-click store connection; without it the wizard uses the manual key flow. |
 | `WA_ACCOUNT_ID` | `default` | Namespaces the WhatsApp session stored in Postgres. |
 | `WA_MARK_ONLINE` | `false` | Whether WhatsApp shows the account as online. |
 | `WA_QR_TERMINAL` | `false` | Print pairing QR in terminal logs; leave off and use the authenticated dashboard. |

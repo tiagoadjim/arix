@@ -22,6 +22,12 @@ export type SettingType = 'string' | 'boolean' | 'number' | 'json' | 'enum';
 export const MAX_LLM_COST_PER_MILLION_USD = 10_000;
 export const MAX_PAYMENT_TOLERANCE = 1_000;
 
+/** Highest screen index the first-run wizard can park on. Keeping the bound in
+ * the schema means a bogus write is rejected by the ordinary settings
+ * validation rather than being able to strand the wizard on a screen that
+ * doesn't exist. Must be >= the dashboard's last wizard step. */
+export const MAX_SETUP_STEP = 20;
+
 export interface SettingDefinition<T = unknown> {
   /** Dot-namespaced DB row key, e.g. "llm.api_key". */
   key: string;
@@ -332,6 +338,19 @@ export const SETTINGS_SCHEMA: readonly SettingDefinition[] = [
     type: 'boolean',
     default: false,
     label: 'First-run setup wizard completed',
+  },
+  {
+    key: 'setup.step',
+    group: 'setup',
+    type: 'number',
+    min: 0,
+    max: MAX_SETUP_STEP,
+    // Resume cursor for the first-run wizard. 0 means "not started"; the wizard
+    // writes the screen it is currently on so a refresh (or the round trip
+    // through WooCommerce's authorization page) comes back to the same place
+    // instead of restarting. Meaningless once setup.completed is true.
+    default: 0,
+    label: 'First-run setup wizard resume step',
   },
 ] as const;
 

@@ -882,6 +882,80 @@ export async function upsertSettings(entries: Array<{ key: string; value: string
   }
 }
 
+// ---- One-click store connection (setup_auth_requests) -----------------------
+
+export interface SetupAuthRequest {
+  id: string;
+  store_origin: string;
+  created_by: string | null;
+}
+
+export interface SetupAuthRequestStatus {
+  id: string;
+  expired: boolean;
+  consumed: boolean;
+  connected: boolean;
+}
+
+/** Mint a pending authorization request and opportunistically drop expired
+ * ones. There is no background sweeper for this table on purpose: rows are
+ * tiny, only administrators can create them, and minting is the only moment
+ * the table is guaranteed to be touched. */
+export async function createSetupAuthRequest(input: {
+  provider: 'woocommerce';
+  stateHash: string;
+  storeOrigin: string;
+  createdBy: string | null;
+  ttlMs: number;
+}): Promise<string> {
+  await one("delete from setup_auth_requests where expires_at < now() - interval '1 day'");
+  const row = await one<{ id: string }>(
+    `insert into setup_auth_requests
+       (account_id, provider, state_hash, store_origin, created_by, expires_at)
+     values ($1, $2, $3, $4, $5, now() + ($6 || ' milliseconds')::interval)
+     returning id`,
+    [ACCOUNT, input.provider, input.stateHash, input.storeOrigin, input.createdBy, String(input.ttlMs)],
+  );
+  if (!row) throw new Error('failed to create setup auth request');
+  return row.id;
+}
+
+/**
+ * Redeem a pending request. The conditional UPDATE is the single-use guard:
+ * two callbacks racing on the same nonce leave exactly one with a row, and a
+ * replay after the window closed matches nothing.
+ */
+export async function consumeSetupAuthRequest(
+  provider: 'woocommerce',
+  stateHash: string,
+): Promise<SetupAuthRequest | null> {
+  return one<SetupAuthRequest>(
+    `update setup_auth_requests set consumed_at = now()
+     where account_id = $1 and provider = $2 and state_hash = $3
+       and consumed_at is null and expires_at > now()
+     returning id, store_origin, created_by`,
+    [ACCOUNT, provider, stateHash],
+  );
+}
+
+export async function markSetupAuthRequestConnected(id: string): Promise<void> {
+  await one('update setup_auth_requests set connected_at = now() where account_id = $1 and id = $2', [ACCOUNT, id]);
+}
+
+export async function getSetupAuthRequestStatus(id: string): Promise<SetupAuthRequestStatus | null> {
+  const row = await one<{ id: string; expires_at: string; consumed_at: string | null; connected_at: string | null }>(
+    'select id, expires_at, consumed_at, connected_at from setup_auth_requests where account_id = $1 and id = $2',
+    [ACCOUNT, id],
+  );
+  if (!row) return null;
+  return {
+    id: row.id,
+    expired: new Date(row.expires_at).getTime() <= Date.now(),
+    consumed: row.consumed_at !== null,
+    connected: row.connected_at !== null,
+  };
+}
+
 export async function createStaff(email: string, passwordHash: string, name: string | null): Promise<Staff> {
   const row = await one<Staff>(
     `insert into staff (email, password_hash, name, role) values ($1, $2, $3, 'admin')

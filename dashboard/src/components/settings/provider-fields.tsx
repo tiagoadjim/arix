@@ -74,12 +74,21 @@ interface ProviderFieldsProps {
   onChange: (values: ProviderFormValues) => void;
   dtos?: SettingDto[];
   disabled?: boolean;
+  /**
+   * Settings keys to leave out, plus the pseudo-key `'test'` for the connection
+   * tester. The setup wizard owns the provider choice and the API key with its
+   * own plain-language surface and renders the rest of this form inside an
+   * "Advanced" disclosure; omitting nothing (the default) keeps the settings
+   * page byte-identical.
+   */
+  hide?: readonly string[];
 }
 
-/** AI provider fields + "Test connection" — shared verbatim between the
- * settings "AI Provider" tab and setup-wizard step 3. */
-export function ProviderFields({ values, onChange, dtos, disabled }: ProviderFieldsProps) {
+/** AI provider fields + "Test connection" — shared between the settings
+ * "AI Provider" tab and the setup wizard's assistant step. */
+export function ProviderFields({ values, onChange, dtos, disabled, hide }: ProviderFieldsProps) {
   const { t } = useT();
+  const hidden = (key: string) => hide?.includes(key) ?? false;
   const [testState, setTestState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [testError, setTestError] = useState<string | null>(null);
 
@@ -125,6 +134,7 @@ export function ProviderFields({ values, onChange, dtos, disabled }: ProviderFie
 
   return (
     <div className="flex flex-col gap-5">
+      {!hidden('llm.provider') && (
       <div className="flex flex-col gap-1.5">
         <Label htmlFor="llm-provider" className="justify-between">
           <span>{t.settings.provider.providerLabel}</span>
@@ -160,7 +170,9 @@ export function ProviderFields({ values, onChange, dtos, disabled }: ProviderFie
           </a>
         </p>
       </div>
+      )}
 
+      {!hidden('llm.api_key') && (
       <div className="flex flex-col gap-1.5">
         <Label htmlFor="llm-api-key" className="justify-between">
           <span>{t.settings.provider.apiKeyLabel}</span>
@@ -174,6 +186,7 @@ export function ProviderFields({ values, onChange, dtos, disabled }: ProviderFie
           readOnly={disabled || isReadOnly('llm.api_key', dtos)}
         />
       </div>
+      )}
 
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="flex flex-col gap-1.5">
@@ -278,22 +291,24 @@ export function ProviderFields({ values, onChange, dtos, disabled }: ProviderFie
         </div>
       )}
 
-      <div className="flex flex-col gap-2">
-        <Button
-          type="button"
-          variant="outline"
-          onClick={() => void runTest()}
-          disabled={disabled || testState === 'loading'}
-          className="w-fit"
-        >
-          {testState === 'loading' ? t.common.testing : t.common.testConnection}
-        </Button>
-        {testState === 'error' && testError && (
-          <Alert variant="destructive">
-            <AlertDescription>{testError}</AlertDescription>
-          </Alert>
-        )}
-      </div>
+      {!hidden('test') && (
+        <div className="flex flex-col gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => void runTest()}
+            disabled={disabled || testState === 'loading'}
+            className="w-fit"
+          >
+            {testState === 'loading' ? t.common.testing : t.common.testConnection}
+          </Button>
+          {testState === 'error' && testError && (
+            <Alert variant="destructive">
+              <AlertDescription>{testError}</AlertDescription>
+            </Alert>
+          )}
+        </div>
+      )}
     </div>
   );
 }

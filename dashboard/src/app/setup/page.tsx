@@ -1,77 +1,90 @@
 'use client';
 
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
-import { useRouter } from 'next/navigation';
-import Link from 'next/link';
+import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { toast } from 'sonner';
 import { CheckCircle2Icon } from 'lucide-react';
-import { api, apiErrorMessage, ApiError, type SettingDto } from '@/lib/api';
-import { interpolate, setLocaleCookie, type Locale } from '@/lib/i18n';
+import { api, apiErrorMessage, type SettingDto } from '@/lib/api';
+import { setLocaleCookie, type Locale } from '@/lib/i18n';
 import { useT } from '@/lib/i18n/provider';
 import { Logo } from '@/components/logo';
-import { Card, CardContent, CardHeader } from '@/components/ui/card';
-import { Progress } from '@/components/ui/progress';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Skeleton } from '@/components/ui/skeleton';
-import {
-  ProviderFields,
-  buildProviderUpdates,
-  initProviderValues,
-  type ProviderFormValues,
-} from '@/components/settings/provider-fields';
-import { StoreFields, buildStoreUpdates, initStoreValues, type StoreFormValues } from '@/components/settings/store-fields';
-import {
-  BusinessFields,
-  buildBusinessUpdates,
-  initBusinessValues,
-  type BusinessFormValues,
-} from '@/components/settings/business-fields';
-import {
-  SkillsFields,
-  buildSkillsUpdates,
-  initSkillsValues,
-  type SkillsFormValues,
-} from '@/components/settings/skills-fields';
-import {
-  McpFields,
-  buildMcpUpdates,
-  initMcpValues,
-  type McpFormValues,
-} from '@/components/settings/mcp-fields';
 import { WhatsAppPanel } from '@/components/settings/whatsapp-panel';
+import { findDto, stringValue } from '@/components/settings/settings-form-utils';
+import { StepActions, WizardShell, type WizardStepMeta } from '@/components/wizard/wizard-shell';
+import { WelcomeStep } from './steps/welcome-step';
+import { AccountStep } from './steps/account-step';
+import { StoreStep } from './steps/store-step';
+import { AiStep } from './steps/ai-step';
+import { LearnStep } from './steps/learn-step';
+import { ReviewStep, type ReviewSummary } from './steps/review-step';
 
 type Grouped = Record<string, SettingDto[]>;
-type Step = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
-const TOTAL_STEPS = 8;
 
-/** Full-screen onboarding wizard, outside the `(panel)` route group (no
- * sidebar). Re-entry: if a session already exists (`needsSetup === false`)
- * we resume at step 3 with a fresh settingsGrouped() fetch — steps 1-2 are
- * done, and steps 3-8 are otherwise client-state-only (a mid-wizard refresh
- * drops back to step 3, matching middleware.ts's gating contract). */
+/** Screens that appear in the rail and are persisted as `setup.step`. Anything
+ * outside this list (welcome, done) is not a resumable position. */
+const STEPS = ['account', 'store', 'ai', 'learn', 'whatsapp', 'review'] as const;
+type StepId = (typeof STEPS)[number];
+type Screen = 'welcome' | StepId | 'done';
+
+/** Cookie the "continue later" link sets, read by middleware.ts so postponing
+ * the wizard is not immediately undone by the auto-launch redirect. */
+const SNOOZE_COOKIE = 'arix_setup_snooze';
+
 export default function SetupPage() {
+  return (
+    <Suspense fallback={<WizardSkeleton />}>
+      <SetupWizard />
+    </Suspense>
+  );
+}
+
+function WizardSkeleton() {
+  return (
+    <main className="grid min-h-dvh place-items-center p-6">
+      <div className="flex w-full max-w-md flex-col gap-3">
+        <Skeleton className="h-4 w-40" />
+        <Skeleton className="h-32 w-full" />
+      </div>
+    </main>
+  );
+}
+
+function SetupWizard() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { t, locale } = useT();
-  const [step, setStep] = useState<Step | null>(null);
+
+  const [screen, setScreen] = useState<Screen | null>(null);
   const [grouped, setGrouped] = useState<Grouped | null>(null);
   const [uiLanguage, setUiLanguage] = useState<Locale>(locale);
+  const [furthest, setFurthest] = useState(0);
+  const [finishing, setFinishing] = useState(false);
+  const [whatsappConnected, setWhatsappConnected] = useState(false);
+  const [aiSummary, setAiSummary] = useState<string | null>(null);
+  const [storeSummary, setStoreSummary] = useState<string | null>(null);
+  const [knowledgeSummary, setKnowledgeSummary] = useState<string | null>(null);
   const finishedRef = useRef(false);
 
-  async function enterConfigSteps() {
+  // WooCommerce sends the browser back here after the owner approves.
+  const wooRequestId = searchParams.get('woo');
+  const wooSuccess = searchParams.get('success');
+
+  const loadSettings = useCallback(async (): Promise<Grouped | null> => {
     try {
-      setGrouped(await api.settingsGrouped());
+      const next = await api.settingsGrouped();
+      setGrouped(next);
+      return next;
     } catch {
-      // Non-fatal — every Fields component falls back to schema defaults.
+      // Non-fatal — every step falls back to schema defaults.
+      return null;
     }
-    setStep(3);
-  }
+  }, []);
 
   useEffect(() => {
     let alive = true;
-    (async () => {
+    void (async () => {
       try {
         const status = await api.setupStatus();
         if (!alive) return;
@@ -79,508 +92,236 @@ export default function SetupPage() {
           router.replace('/');
           return;
         }
-        if (!status.needsSetup) {
-          await enterConfigSteps();
-        } else {
-          setStep(1);
+        setWhatsappConnected(status.whatsapp.connected);
+        if (status.needsSetup) {
+          setScreen('welcome');
+          return;
         }
+        const settings = await loadSettings();
+        if (!alive) return;
+        // Resume where they left off. A returning WooCommerce redirect always
+        // wins, so the approval round trip lands back on the store screen.
+        const resumeIndex = wooRequestId
+          ? STEPS.indexOf('store')
+          : Math.min(Math.max(status.step - 1, 0), STEPS.length - 1);
+        setFurthest(Math.max(resumeIndex, deriveFurthest(settings)));
+        setScreen(STEPS[resumeIndex] ?? 'account');
       } catch {
-        if (alive) setStep(1); // fail open to the start of the wizard
+        if (alive) setScreen('welcome'); // fail open into the wizard
       }
     })();
     return () => {
       alive = false;
     };
-  }, [router]);
+  }, [router, loadSettings, wooRequestId]);
+
+  /** Persist the resume cursor. Best-effort: losing it costs one extra click,
+   * so it must never block navigation or surface an error. */
+  const persistStep = useCallback((index: number) => {
+    void api.saveSettings([{ key: 'setup.step', value: index + 1 }]).catch(() => {});
+  }, []);
+
+  const goTo = useCallback(
+    (next: Screen) => {
+      const index = STEPS.indexOf(next as StepId);
+      if (index >= 0) {
+        setFurthest((current) => Math.max(current, index));
+        persistStep(index);
+      }
+      setScreen(next);
+      window.scrollTo({ top: 0 });
+    },
+    [persistStep],
+  );
+
+  const advance = useCallback(
+    (from: StepId) => {
+      const next = STEPS[STEPS.indexOf(from) + 1];
+      goTo(next ?? 'review');
+    },
+    [goTo],
+  );
 
   function pickLanguage(next: Locale) {
     setUiLanguage(next);
     setLocaleCookie(next);
     router.refresh();
-    setStep(2);
+  }
+
+  function continueLater() {
+    document.cookie = `${SNOOZE_COOKIE}=1; path=/; max-age=${60 * 60 * 24}; samesite=lax`;
+    router.push('/');
   }
 
   async function finishSetup() {
     if (finishedRef.current) return;
     finishedRef.current = true;
+    setFinishing(true);
     try {
       await api.setupComplete();
-      setStep(9);
-    } catch {
-      toast.error(t.wizard.finishError);
+      setScreen('done');
+    } catch (err) {
+      toast.error(apiErrorMessage(err, t, t.wizard.finishError));
       finishedRef.current = false;
+    } finally {
+      setFinishing(false);
     }
   }
 
-  if (step === null) {
+  if (screen === null) return <WizardSkeleton />;
+
+  if (screen === 'welcome') {
     return (
-      <WizardChrome>
-        <div className="flex flex-col items-center gap-3 py-6">
-          <Skeleton className="h-4 w-40" />
-          <Skeleton className="h-32 w-full" />
-        </div>
-      </WizardChrome>
-    );
-  }
-
-  if (step === 9) {
-    return (
-      <WizardChrome>
-        <div className="flex flex-col items-center gap-4 py-4 text-center">
-          <CheckCircle2Icon className="size-12 text-success" />
-          <div>
-            <h1 className="text-lg font-semibold">{t.wizard.done.title}</h1>
-            <p className="text-sm text-muted-foreground">{t.wizard.done.subtitle}</p>
-          </div>
-          <Button onClick={() => router.push('/')}>{t.wizard.done.goToDashboard}</Button>
-        </div>
-      </WizardChrome>
-    );
-  }
-
-  const titles: Record<Exclude<Step, 9>, { title: string; subtitle?: string }> = {
-    1: { title: t.wizard.welcome.title, subtitle: t.wizard.welcome.subtitle },
-    2: { title: t.wizard.admin.title, subtitle: t.wizard.admin.subtitle },
-    3: { title: t.wizard.provider.title, subtitle: t.wizard.provider.subtitle },
-    4: { title: t.wizard.store.title, subtitle: t.wizard.store.subtitle },
-    5: { title: t.wizard.skills.title, subtitle: t.wizard.skills.subtitle },
-    6: { title: t.wizard.mcp.title, subtitle: t.wizard.mcp.subtitle },
-    7: { title: t.wizard.business.title, subtitle: t.wizard.business.subtitle },
-    8: { title: t.wizard.whatsapp.title, subtitle: t.wizard.whatsapp.subtitle },
-  };
-
-  return (
-    <WizardChrome step={step} title={titles[step].title} subtitle={titles[step].subtitle}>
-      {step === 1 && <WelcomeStep uiLanguage={uiLanguage} onPick={pickLanguage} />}
-      {step === 2 && <AdminStep onCreated={() => void enterConfigSteps()} />}
-      {step === 3 && (
-        <ProviderStep dtos={grouped?.llm} onNext={() => setStep(4)} onSkip={() => setStep(4)} />
-      )}
-      {step === 4 && (
-        <StoreStep wc={grouped?.wc} payment={grouped?.payment} onNext={() => setStep(5)} onSkip={() => setStep(5)} />
-      )}
-      {step === 5 && (
-        <SkillsStep dtos={grouped?.skills} onNext={() => setStep(6)} onSkip={() => setStep(6)} />
-      )}
-      {step === 6 && (
-        <McpStep dtos={grouped?.mcp} onNext={() => setStep(7)} onSkip={() => setStep(7)} />
-      )}
-      {step === 7 && (
-        <BusinessStep
-          grouped={grouped}
-          uiLanguage={uiLanguage}
-          onUiLanguageChange={setUiLanguage}
-          onNext={() => setStep(8)}
-        />
-      )}
-      {step === 8 && <WhatsAppStep onConnected={() => void finishSetup()} onSkip={() => void finishSetup()} />}
-    </WizardChrome>
-  );
-}
-
-function WizardChrome({
-  step,
-  title,
-  subtitle,
-  children,
-}: {
-  step?: Step;
-  title?: string;
-  subtitle?: string;
-  children: ReactNode;
-}) {
-  const { t } = useT();
-  return (
-    <main id="main-content" tabIndex={-1} className="grid min-h-dvh place-items-center bg-background p-4 outline-none">
-      <Card className="w-full max-w-xl">
-        <CardHeader className="flex flex-col items-center gap-3 text-center">
+      <main id="main-content" tabIndex={-1} className="grid min-h-dvh place-items-center bg-background p-5 outline-none">
+        <div className="flex w-full max-w-lg flex-col gap-8">
           <Logo markClassName="h-8 w-8 text-primary" />
-          {step && step <= TOTAL_STEPS && (
-            <div className="flex w-full flex-col gap-1.5">
-              <Progress value={(step / TOTAL_STEPS) * 100} />
-              <p className="text-xs text-muted-foreground">{interpolate(t.wizard.stepProgress, { n: step, total: TOTAL_STEPS })}</p>
-            </div>
-          )}
-          {title && (
-            <div>
-              <h1 className="text-lg font-semibold">{title}</h1>
-              {subtitle && <p className="text-sm text-muted-foreground">{subtitle}</p>}
-            </div>
-          )}
-        </CardHeader>
-        <CardContent>{children}</CardContent>
-      </Card>
-    </main>
-  );
-}
-
-function WelcomeStep({ uiLanguage, onPick }: { uiLanguage: Locale; onPick: (locale: Locale) => void }) {
-  const { t } = useT();
-  return (
-    <div className="flex flex-col items-center gap-3">
-      <p className="text-sm font-medium">{t.wizard.welcome.languagePrompt}</p>
-      <div className="flex gap-3">
-        <Button variant={uiLanguage === 'es' ? 'default' : 'outline'} onClick={() => onPick('es')}>
-          Español
-        </Button>
-        <Button variant={uiLanguage === 'en' ? 'default' : 'outline'} onClick={() => onPick('en')}>
-          English
-        </Button>
-      </div>
-    </div>
-  );
-}
-
-function AdminStep({ onCreated }: { onCreated: () => void }) {
-  const { t } = useT();
-  const [setupToken, setSetupToken] = useState('');
-  const [name, setName] = useState('');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [alreadyDone, setAlreadyDone] = useState(false);
-
-  async function submit(e: FormEvent) {
-    e.preventDefault();
-    setError(null);
-    setAlreadyDone(false);
-    if (!setupToken) {
-      setError(t.wizard.admin.setupTokenRequired);
-      return;
-    }
-    if (password.length < 8) {
-      setError(t.wizard.admin.passwordTooShort);
-      return;
-    }
-    if (password !== confirmPassword) {
-      setError(t.wizard.admin.passwordMismatch);
-      return;
-    }
-    setSubmitting(true);
-    try {
-      await api.setupAdmin({ setupToken, name: name.trim(), email: email.trim(), password });
-      setSetupToken('');
-      onCreated();
-    } catch (err) {
-      // Coupled to the exact stable code server/src/api/server.ts's POST
-      // /api/setup/admin returns on a 409 (setup already completed).
-      if (err instanceof ApiError && err.code === 'setup_already_completed') setAlreadyDone(true);
-      else setError(apiErrorMessage(err, t, t.common.error));
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  if (alreadyDone) {
-    return (
-      <div className="flex flex-col items-center gap-4 text-center">
-        <p className="text-sm text-muted-foreground">{t.wizard.admin.alreadyDone}</p>
-        <Button asChild>
-          <Link href="/login">{t.wizard.admin.loginLink}</Link>
-        </Button>
-      </div>
+          <div className="flex flex-col gap-2">
+            <h1 className="text-3xl font-semibold tracking-tight text-balance">{t.wizard.welcome.title}</h1>
+            <p className="text-sm text-muted-foreground text-pretty">{t.wizard.welcome.subtitle}</p>
+          </div>
+          <WelcomeStep uiLanguage={uiLanguage} onPickLanguage={pickLanguage} onStart={() => goTo('account')} />
+        </div>
+      </main>
     );
   }
 
-  return (
-    <form onSubmit={(e) => void submit(e)} className="flex flex-col gap-4" noValidate>
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor="admin-setup-token">{t.wizard.admin.setupTokenLabel}</Label>
-        <Input
-          id="admin-setup-token"
-          type="password"
-          autoComplete="off"
-          spellCheck={false}
-          value={setupToken}
-          onChange={(e) => setSetupToken(e.target.value)}
-          autoFocus
-          required
-        />
-        <p className="text-xs text-muted-foreground">{t.wizard.admin.setupTokenHint}</p>
-      </div>
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor="admin-name">{t.wizard.admin.nameLabel}</Label>
-        <Input id="admin-name" value={name} onChange={(e) => setName(e.target.value)} />
-      </div>
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor="admin-email">{t.wizard.admin.emailLabel}</Label>
-        <Input id="admin-email" type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
-      </div>
-      <div className="grid gap-4 sm:grid-cols-2">
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="admin-password">{t.wizard.admin.passwordLabel}</Label>
-          <Input
-            id="admin-password"
-            type="password"
-            autoComplete="new-password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-          />
+  if (screen === 'done') {
+    return (
+      <main id="main-content" tabIndex={-1} className="grid min-h-dvh place-items-center bg-background p-5 outline-none">
+        <div className="flex max-w-md flex-col items-center gap-5 text-center">
+          <CheckCircle2Icon aria-hidden className="size-12 text-success" />
+          <div className="flex flex-col gap-1">
+            <h1 className="text-2xl font-semibold">{t.wizard.done.title}</h1>
+            <p className="text-sm text-muted-foreground text-pretty">{t.wizard.done.subtitle}</p>
+          </div>
+          <Button size="lg" onClick={() => router.push('/')}>
+            {t.wizard.done.goToDashboard}
+          </Button>
         </div>
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="admin-confirm">{t.wizard.admin.confirmPasswordLabel}</Label>
-          <Input
-            id="admin-confirm"
-            type="password"
-            autoComplete="new-password"
-            value={confirmPassword}
-            onChange={(e) => setConfirmPassword(e.target.value)}
-            required
-          />
-        </div>
-      </div>
-      <p className="-mt-2 text-xs text-muted-foreground">{t.wizard.admin.passwordHint}</p>
-      <Button type="submit" disabled={submitting}>
-        {submitting ? t.wizard.admin.submitting : t.wizard.admin.submit}
-      </Button>
-      {error && (
-        <Alert variant="destructive">
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
-      )}
-    </form>
-  );
-}
-
-function SkipLink({ onClick, disabled, children }: { onClick: () => void; disabled?: boolean; children: ReactNode }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      className="text-sm text-muted-foreground underline underline-offset-2 hover:text-foreground disabled:opacity-50"
-    >
-      {children}
-    </button>
-  );
-}
-
-function ProviderStep({ dtos, onNext, onSkip }: { dtos?: SettingDto[]; onNext: () => void; onSkip: () => void }) {
-  const { t } = useT();
-  const [values, setValues] = useState<ProviderFormValues>(() => initProviderValues(dtos));
-  const [saving, setSaving] = useState(false);
-
-  async function handleNext() {
-    setSaving(true);
-    try {
-      const updates = buildProviderUpdates(values, dtos);
-      if (updates.length > 0) await api.saveSettings(updates);
-      onNext();
-    } catch (err) {
-      toast.error(apiErrorMessage(err, t, t.common.error));
-    } finally {
-      setSaving(false);
-    }
+      </main>
+    );
   }
 
-  return (
-    <div className="flex flex-col gap-5">
-      <ProviderFields values={values} onChange={setValues} dtos={dtos} disabled={saving} />
-      <div className="flex items-center justify-between">
-        <SkipLink onClick={onSkip} disabled={saving}>
-          {t.wizard.provider.skipLink}
-        </SkipLink>
-        <Button onClick={() => void handleNext()} disabled={saving}>
-          {saving ? t.common.saving : t.common.next}
-        </Button>
-      </div>
-    </div>
-  );
-}
+  const currentIndex = STEPS.indexOf(screen);
+  const storeConfigured =
+    storeSummary ?? (findDto('wc.consumer_key', grouped?.wc)?.set ? stringValue('wc.url', grouped?.wc) : null);
+  const aiConfigured =
+    aiSummary ?? (findDto('llm.api_key', grouped?.llm)?.set ? stringValue('llm.provider', grouped?.llm) : null);
 
-function StoreStep({
-  wc,
-  payment,
-  onNext,
-  onSkip,
-}: {
-  wc?: SettingDto[];
-  payment?: SettingDto[];
-  onNext: () => void;
-  onSkip: () => void;
-}) {
-  const { t } = useT();
-  const [values, setValues] = useState<StoreFormValues>(() => initStoreValues(wc, payment));
-  const [saving, setSaving] = useState(false);
+  const steps: WizardStepMeta[] = [
+    { id: 'account', label: t.wizard.nav.account, status: undefined },
+    { id: 'store', label: t.wizard.nav.store, status: storeConfigured ?? undefined },
+    { id: 'ai', label: t.wizard.nav.ai, status: aiConfigured ?? undefined },
+    { id: 'learn', label: t.wizard.nav.learn, status: knowledgeSummary ?? undefined },
+    { id: 'whatsapp', label: t.wizard.nav.whatsapp, status: whatsappConnected ? t.wizard.review.configured : undefined },
+    { id: 'review', label: t.wizard.nav.review, status: undefined },
+  ];
 
-  async function handleNext() {
-    setSaving(true);
-    try {
-      const updates = buildStoreUpdates(values, wc, payment);
-      if (updates.length > 0) await api.saveSettings(updates);
-      onNext();
-    } catch (err) {
-      toast.error(apiErrorMessage(err, t, t.common.error));
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return (
-    <div className="flex flex-col gap-5">
-      <StoreFields values={values} onChange={setValues} wc={wc} payment={payment} disabled={saving} />
-      <div className="flex items-center justify-between">
-        <SkipLink onClick={onSkip} disabled={saving}>
-          {t.wizard.store.skipLink}
-        </SkipLink>
-        <Button onClick={() => void handleNext()} disabled={saving}>
-          {saving ? t.common.saving : t.common.next}
-        </Button>
-      </div>
-    </div>
-  );
-}
-
-function SkillsStep({
-  dtos,
-  onNext,
-  onSkip,
-}: {
-  dtos?: SettingDto[];
-  onNext: () => void;
-  onSkip: () => void;
-}) {
-  const { t } = useT();
-  const [values, setValues] = useState<SkillsFormValues>(() => initSkillsValues(dtos));
-  const [saving, setSaving] = useState(false);
-
-  async function handleNext() {
-    setSaving(true);
-    try {
-      const updates = buildSkillsUpdates(values, dtos);
-      if (updates.length > 0) await api.saveSettings(updates);
-      onNext();
-    } catch (err) {
-      toast.error(apiErrorMessage(err, t, t.common.error));
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return (
-    <div className="flex flex-col gap-5">
-      <SkillsFields values={values} onChange={setValues} dtos={dtos} disabled={saving} />
-      <div className="flex items-center justify-between">
-        <SkipLink onClick={onSkip} disabled={saving}>
-          {t.wizard.skills.skipLink}
-        </SkipLink>
-        <Button onClick={() => void handleNext()} disabled={saving}>
-          {saving ? t.common.saving : t.common.next}
-        </Button>
-      </div>
-    </div>
-  );
-}
-
-function McpStep({
-  dtos,
-  onNext,
-  onSkip,
-}: {
-  dtos?: SettingDto[];
-  onNext: () => void;
-  onSkip: () => void;
-}) {
-  const { t } = useT();
-  const [values, setValues] = useState<McpFormValues>(() => initMcpValues(dtos));
-  const [saving, setSaving] = useState(false);
-
-  async function handleNext() {
-    setSaving(true);
-    try {
-      const updates = buildMcpUpdates(values, dtos);
-      if (updates.length > 0) await api.saveSettings(updates);
-      onNext();
-    } catch (err) {
-      toast.error(apiErrorMessage(err, t, t.common.error));
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return (
-    <div className="flex flex-col gap-5">
-      <McpFields values={values} onChange={setValues} dtos={dtos} disabled={saving} />
-      <div className="flex items-center justify-between">
-        <SkipLink onClick={onSkip} disabled={saving}>
-          {t.wizard.mcp.skipLink}
-        </SkipLink>
-        <Button onClick={() => void handleNext()} disabled={saving}>
-          {saving ? t.common.saving : t.common.next}
-        </Button>
-      </div>
-    </div>
-  );
-}
-
-function BusinessStep({
-  grouped,
-  uiLanguage,
-  onUiLanguageChange,
-  onNext,
-}: {
-  grouped: Grouped | null;
-  uiLanguage: Locale;
-  onUiLanguageChange: (locale: Locale) => void;
-  onNext: () => void;
-}) {
-  const { t, locale } = useT();
-  const router = useRouter();
-  const dtos = {
-    business: grouped?.business,
-    agent: grouped?.agent,
-    info: grouped?.info,
-    dispatch: grouped?.dispatch,
-    compliance: grouped?.compliance,
+  const summary: ReviewSummary = {
+    store: storeConfigured,
+    ai: aiConfigured,
+    knowledge: knowledgeSummary,
+    whatsapp: whatsappConnected,
   };
-  const [values, setValues] = useState<BusinessFormValues>(() => initBusinessValues(dtos));
-  const [saving, setSaving] = useState(false);
 
-  async function handleNext() {
-    setSaving(true);
-    try {
-      const updates = buildBusinessUpdates(values, dtos);
-      if (updates.length > 0) await api.saveSettings(updates);
-      if (uiLanguage !== locale) {
-        // Soft refresh (not a hard reload) — keeps the wizard's step state so
-        // step 8 renders immediately in the newly-picked language.
-        setLocaleCookie(uiLanguage);
-        router.refresh();
-      }
-      onNext();
-    } catch (err) {
-      toast.error(apiErrorMessage(err, t, t.common.error));
-    } finally {
-      setSaving(false);
-    }
-  }
+  const titles: Record<StepId, { title: string; subtitle: string }> = {
+    account: { title: t.wizard.admin.title, subtitle: t.wizard.admin.subtitle },
+    store: { title: t.wizard.store.title, subtitle: t.wizard.store.subtitle },
+    ai: { title: t.wizard.ai.title, subtitle: t.wizard.ai.subtitle },
+    learn: { title: t.wizard.learn.title, subtitle: t.wizard.learn.subtitle },
+    whatsapp: { title: t.wizard.whatsapp.title, subtitle: t.wizard.whatsapp.subtitle },
+    review: { title: t.wizard.review.title, subtitle: t.wizard.review.subtitle },
+  };
 
   return (
-    <div className="flex flex-col gap-5">
-      <BusinessFields
-        values={values}
-        onChange={setValues}
-        uiLanguage={uiLanguage}
-        onUiLanguageChange={onUiLanguageChange}
-        dtos={dtos}
-        disabled={saving}
-      />
-      <Button onClick={() => void handleNext()} disabled={saving} className="w-fit self-end">
-        {saving ? t.common.saving : t.common.next}
-      </Button>
-    </div>
+    <WizardShell
+      steps={steps}
+      currentIndex={currentIndex}
+      furthestIndex={furthest}
+      onNavigate={(index) => {
+        const target = STEPS[index];
+        if (target) goTo(target);
+      }}
+      onContinueLater={screen === 'account' ? undefined : continueLater}
+      title={titles[screen].title}
+      subtitle={titles[screen].subtitle}
+    >
+      {screen === 'account' && (
+        <AccountStep
+          onCreated={() => {
+            void loadSettings();
+            goTo('store');
+          }}
+        />
+      )}
+
+      {screen === 'store' && (
+        <StoreStep
+          wc={grouped?.wc}
+          payment={grouped?.payment}
+          returnedRequestId={wooRequestId ?? undefined}
+          returnedSuccess={wooSuccess === null ? undefined : wooSuccess === '1'}
+          onConnected={(base) => {
+            setStoreSummary(base);
+            void loadSettings();
+          }}
+          onNext={() => advance('store')}
+          onSkip={() => advance('store')}
+        />
+      )}
+
+      {screen === 'ai' && (
+        <AiStep
+          dtos={grouped?.llm}
+          onVerified={setAiSummary}
+          onNext={() => advance('ai')}
+          onSkip={() => advance('ai')}
+        />
+      )}
+
+      {screen === 'learn' && (
+        <LearnStep
+          grouped={grouped}
+          storeUrl={storeConfigured ?? stringValue('wc.url', grouped?.wc)}
+          llmConfigured={Boolean(aiSummary) || (findDto('llm.api_key', grouped?.llm)?.set ?? false)}
+          onApplied={(count) => setKnowledgeSummary(count > 0 ? String(count) : null)}
+          onSettingsChanged={() => void loadSettings()}
+          onNext={() => advance('learn')}
+          onSkip={() => advance('learn')}
+        />
+      )}
+
+      {screen === 'whatsapp' && (
+        <div className="flex flex-col gap-6">
+          <WhatsAppPanel
+            onConnected={() => {
+              setWhatsappConnected(true);
+              advance('whatsapp');
+            }}
+          />
+          <StepActions onSkip={() => advance('whatsapp')} skipLabel={t.wizard.whatsapp.skipLink}>
+            <Button onClick={() => advance('whatsapp')}>{t.common.next}</Button>
+          </StepActions>
+        </div>
+      )}
+
+      {screen === 'review' && (
+        <ReviewStep summary={summary} finishing={finishing} onFinish={() => void finishSetup()} />
+      )}
+    </WizardShell>
   );
 }
 
-function WhatsAppStep({ onConnected, onSkip }: { onConnected: () => void; onSkip: () => void }) {
-  const { t } = useT();
-  return (
-    <div className="flex flex-col items-center gap-4">
-      <WhatsAppPanel onConnected={onConnected} />
-      <SkipLink onClick={onSkip}>{t.wizard.whatsapp.skipLink}</SkipLink>
-    </div>
-  );
+/**
+ * Where an install that predates the resume cursor should pick up.
+ *
+ * Without this an upgrade mid-onboarding would always restart at the first
+ * screen, asking someone to redo work the settings already show as done.
+ */
+function deriveFurthest(settings: Grouped | null): number {
+  if (!settings) return 0;
+  let index = 0;
+  if (findDto('wc.consumer_key', settings.wc)?.set) index = Math.max(index, STEPS.indexOf('ai'));
+  if (findDto('llm.api_key', settings.llm)?.set) index = Math.max(index, STEPS.indexOf('learn'));
+  return index;
 }

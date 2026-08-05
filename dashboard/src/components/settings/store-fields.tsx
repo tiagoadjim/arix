@@ -77,12 +77,21 @@ interface StoreFieldsProps {
   wc?: SettingDto[];
   payment?: SettingDto[];
   disabled?: boolean;
+  /**
+   * Settings keys to leave out, plus the pseudo-key `'test'` for the connection
+   * tester. The setup wizard owns the store URL and credentials with its own
+   * plain-language surface and renders the rest of this form inside an
+   * "Advanced" disclosure; omitting nothing (the default) keeps the settings
+   * page byte-identical.
+   */
+  hide?: readonly string[];
 }
 
-/** WooCommerce connection fields + "Test connection" — shared verbatim
- * between the settings "Store" tab and setup-wizard step 4. */
-export function StoreFields({ values, onChange, wc, payment, disabled }: StoreFieldsProps) {
+/** WooCommerce connection fields + "Test connection" — shared between the
+ * settings "Store" tab and the setup wizard's store step. */
+export function StoreFields({ values, onChange, wc, payment, disabled, hide }: StoreFieldsProps) {
   const { t } = useT();
+  const hidden = (key: string) => hide?.includes(key) ?? false;
   const [testState, setTestState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [testError, setTestError] = useState<string | null>(null);
   const toleranceBounds = numberBounds('payment.tolerance', payment, { min: 0 });
@@ -126,48 +135,52 @@ export function StoreFields({ values, onChange, wc, payment, disabled }: StoreFi
 
   return (
     <div className="flex flex-col gap-5">
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor="wc-url" className="justify-between">
-          <span>{t.settings.store.urlLabel}</span>
-          {isReadOnly('wc.url', wc) && <Badge variant="outline">{t.common.envLockedBadge}</Badge>}
-        </Label>
-        <Input
-          id="wc-url"
-          value={values.url}
-          onChange={(e) => set('url', e.target.value)}
-          placeholder={t.settings.store.urlPlaceholder}
-          disabled={disabled || isReadOnly('wc.url', wc)}
-        />
-      </div>
+      {!hidden('wc.url') && (
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="wc-url" className="justify-between">
+            <span>{t.settings.store.urlLabel}</span>
+            {isReadOnly('wc.url', wc) && <Badge variant="outline">{t.common.envLockedBadge}</Badge>}
+          </Label>
+          <Input
+            id="wc-url"
+            value={values.url}
+            onChange={(e) => set('url', e.target.value)}
+            placeholder={t.settings.store.urlPlaceholder}
+            disabled={disabled || isReadOnly('wc.url', wc)}
+          />
+        </div>
+      )}
 
-      <div className="grid gap-4 sm:grid-cols-2">
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="wc-consumer-key" className="justify-between">
-            <span>{t.settings.store.consumerKeyLabel}</span>
-            {isReadOnly('wc.consumer_key', wc) && <Badge variant="outline">{t.common.envLockedBadge}</Badge>}
-          </Label>
-          <SecretInput
-            id="wc-consumer-key"
-            value={values.consumerKey}
-            onChange={(v) => set('consumerKey', v)}
-            set={findDto('wc.consumer_key', wc)?.set ?? false}
-            readOnly={disabled || isReadOnly('wc.consumer_key', wc)}
-          />
+      {!hidden('wc.consumer_key') && (
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="wc-consumer-key" className="justify-between">
+              <span>{t.settings.store.consumerKeyLabel}</span>
+              {isReadOnly('wc.consumer_key', wc) && <Badge variant="outline">{t.common.envLockedBadge}</Badge>}
+            </Label>
+            <SecretInput
+              id="wc-consumer-key"
+              value={values.consumerKey}
+              onChange={(v) => set('consumerKey', v)}
+              set={findDto('wc.consumer_key', wc)?.set ?? false}
+              readOnly={disabled || isReadOnly('wc.consumer_key', wc)}
+            />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="wc-consumer-secret" className="justify-between">
+              <span>{t.settings.store.consumerSecretLabel}</span>
+              {isReadOnly('wc.consumer_secret', wc) && <Badge variant="outline">{t.common.envLockedBadge}</Badge>}
+            </Label>
+            <SecretInput
+              id="wc-consumer-secret"
+              value={values.consumerSecret}
+              onChange={(v) => set('consumerSecret', v)}
+              set={findDto('wc.consumer_secret', wc)?.set ?? false}
+              readOnly={disabled || isReadOnly('wc.consumer_secret', wc)}
+            />
+          </div>
         </div>
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="wc-consumer-secret" className="justify-between">
-            <span>{t.settings.store.consumerSecretLabel}</span>
-            {isReadOnly('wc.consumer_secret', wc) && <Badge variant="outline">{t.common.envLockedBadge}</Badge>}
-          </Label>
-          <SecretInput
-            id="wc-consumer-secret"
-            value={values.consumerSecret}
-            onChange={(v) => set('consumerSecret', v)}
-            set={findDto('wc.consumer_secret', wc)?.set ?? false}
-            readOnly={disabled || isReadOnly('wc.consumer_secret', wc)}
-          />
-        </div>
-      </div>
+      )}
 
       <div className="flex flex-col gap-1.5">
         <Label htmlFor="wc-front-url">{t.settings.store.frontUrlLabel}</Label>
@@ -259,22 +272,24 @@ export function StoreFields({ values, onChange, wc, payment, disabled }: StoreFi
         </AlertDescription>
       </Alert>
 
-      <div className="flex flex-col gap-2">
-        <Button
-          type="button"
-          variant="outline"
-          onClick={() => void runTest()}
-          disabled={disabled || testState === 'loading'}
-          className="w-fit"
-        >
-          {testState === 'loading' ? t.common.testing : t.common.testConnection}
-        </Button>
-        {testState === 'error' && testError && (
-          <Alert variant="destructive">
-            <AlertDescription>{testError}</AlertDescription>
-          </Alert>
-        )}
-      </div>
+      {!hidden('test') && (
+        <div className="flex flex-col gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => void runTest()}
+            disabled={disabled || testState === 'loading'}
+            className="w-fit"
+          >
+            {testState === 'loading' ? t.common.testing : t.common.testConnection}
+          </Button>
+          {testState === 'error' && testError && (
+            <Alert variant="destructive">
+              <AlertDescription>{testError}</AlertDescription>
+            </Alert>
+          )}
+        </div>
+      )}
     </div>
   );
 }

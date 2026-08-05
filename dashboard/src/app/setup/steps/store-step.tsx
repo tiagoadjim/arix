@@ -84,56 +84,64 @@ export function StoreStep({
     [onConnected, t],
   );
 
+  // The polling loop below must survive re-renders, and its own first action is
+  // to set state. Reading the changing values through a ref keeps the effect's
+  // dependency list down to the redirect itself — depend on `finishConnected`
+  // (whose identity changes every render, since the parent passes an inline
+  // callback) and the cleanup would tear the loop down the moment it started.
+  const latest = useRef({ finishConnected, url, t });
+  latest.current = { finishConnected, url, t };
+
   // Coming back from the store's approval screen. WooCommerce delivers the
-  // credentials to the server first and only then redirects the browser, but
-  // that delivery can fail silently (a store that cannot reach us), so this
-  // polls and falls back rather than waiting forever.
+  // credentials to the server before redirecting the browser, but that delivery
+  // can fail silently — a store that cannot reach us — so this polls for a
+  // bounded window and then falls back to the manual flow.
   useEffect(() => {
     if (!returnedRequestId || claimedRef.current) return;
+    claimedRef.current = true;
+
     if (returnedSuccess === false) {
       setPanel('manual');
       setPhase('error');
-      setMessage(t.wizard.store.oauthDeclined);
+      setMessage(latest.current.t.wizard.store.oauthDeclined);
       return;
     }
-    claimedRef.current = true;
+
     let alive = true;
     const startedAt = Date.now();
     setPanel('oauth');
     setPhase('busy');
-    setMessage(t.wizard.store.oauthWaiting);
+    setMessage(latest.current.t.wizard.store.oauthWaiting);
+
+    const giveUp = (message: string) => {
+      setPanel('manual');
+      setPhase('error');
+      setMessage(message);
+    };
 
     const tick = async (): Promise<void> => {
       if (!alive) return;
+      const { t: copy, url: currentUrl, finishConnected: finish } = latest.current;
       try {
         const { status } = await api.wooAuthStatus(returnedRequestId);
         if (!alive) return;
         if (status === 'delivered') {
           const claim = await api.wooClaim(returnedRequestId);
           if (!alive) return;
-          if (claim.ok) {
-            finishConnected(claim.storeBase ?? url, claim.sampleProductName);
-          } else {
-            setPanel('manual');
-            setPhase('error');
-            setMessage(claim.error ?? t.common.error);
-          }
+          if (claim.ok) finish(claim.storeBase ?? currentUrl, claim.sampleProductName);
+          else giveUp(claim.error ?? copy.common.error);
           return;
         }
         if (status === 'connected') {
-          finishConnected(url);
+          finish(currentUrl);
           return;
         }
         if (status === 'expired' || Date.now() - startedAt > DELIVERY_TIMEOUT_MS) {
-          setPanel('manual');
-          setPhase('error');
-          setMessage(t.wizard.store.oauthTimeout);
+          giveUp(copy.wizard.store.oauthTimeout);
           return;
         }
       } catch {
-        setPanel('manual');
-        setPhase('error');
-        setMessage(t.wizard.store.oauthTimeout);
+        giveUp(copy.wizard.store.oauthTimeout);
         return;
       }
       setTimeout(() => void tick(), DELIVERY_POLL_MS);
@@ -143,7 +151,7 @@ export function StoreStep({
     return () => {
       alive = false;
     };
-  }, [returnedRequestId, returnedSuccess, url, t, finishConnected]);
+  }, [returnedRequestId, returnedSuccess]);
 
   async function runConnect() {
     setPhase('busy');

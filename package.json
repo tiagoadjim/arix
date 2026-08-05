@@ -2,7 +2,7 @@
   "name": "arix",
   "version": "0.1.0",
   "private": true,
-  "description": "Arix — open-source AI sales agent for WooCommerce over WhatsApp (Baileys + your LLM of choice + Postgres)",
+  "description": "Arix \u2014 open-source AI sales agent for WooCommerce over WhatsApp (Baileys + your LLM of choice + Postgres)",
   "type": "module",
   "engines": {
     "node": ">=24 <25"
@@ -20,7 +20,14 @@
   "packageManager": "pnpm@10.30.0",
   "pnpm": {
     "overrides": {
-      "postcss": "8.5.16"
+      "postcss": "^8.5.23",
+      "sharp": "^0.35.0",
+      "body-parser": "^1.20.6",
+      "protobufjs": "^7.6.5",
+      "fast-uri": "^3.1.5",
+      "ip-address": "^10.3.1",
+      "hono": "^4.12.34",
+      "@hono/node-server": "^2.0.5"
     }
   },
   "devDependencies": {

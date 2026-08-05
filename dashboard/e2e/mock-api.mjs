@@ -125,7 +125,8 @@ function freshState(overrides = {}) {
     setupStep: 0,
     wooAuthMode: 'manual',
     wooAuthStatus: 'delivered',
-    scanTicks: 0,
+    scans: {},
+    scanSeq: 0,
     ...overrides,
   };
 }
@@ -247,17 +248,25 @@ async function handle(req, res) {
 
   // ---- site scan ----
   if (pathname === '/api/setup/site-scan' && method === 'POST') {
-    state.scanTicks = 0;
-    return json(res, 202, { id: '55555555-5555-4555-8555-555555555555' });
+    // A fresh id per scan. A poll still in flight from an earlier test carries
+    // the previous id, so it 404s instead of advancing this scan's state — the
+    // wizard polls once a second, and without this the counter was shared.
+    state.scanSeq = (state.scanSeq ?? 0) + 1;
+    const id = `55555555-5555-4555-8555-${String(state.scanSeq).padStart(12, '0')}`;
+    state.scans[id] = { ticks: 0 };
+    return json(res, 202, { id });
   }
 
   if (pathname.startsWith('/api/setup/site-scan/') && method === 'GET') {
+    const id = pathname.slice('/api/setup/site-scan/'.length);
+    const scan = state.scans[id];
+    if (!scan) return json(res, 404, { error: 'scan_not_found' });
     // One crawling tick, then the result — enough for the UI to render both
     // states without making the test wait on a real timer.
-    state.scanTicks = (state.scanTicks ?? 0) + 1;
-    if (state.scanTicks < 2) {
+    scan.ticks += 1;
+    if (scan.ticks < 2) {
       return json(res, 200, {
-        id: '55555555-5555-4555-8555-555555555555',
+        id,
         state: 'crawling',
         root: 'https://shop.example.com',
         progress: { pagesFound: 4, pagesFetched: 1, maxPages: 25, currentUrl: 'https://shop.example.com/shipping' },
@@ -266,7 +275,7 @@ async function handle(req, res) {
       });
     }
     return json(res, 200, {
-      id: '55555555-5555-4555-8555-555555555555',
+      id,
       state: 'done',
       root: 'https://shop.example.com',
       progress: { pagesFound: 4, pagesFetched: 4, maxPages: 25, currentUrl: null },

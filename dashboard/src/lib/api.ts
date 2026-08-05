@@ -179,7 +179,69 @@ export interface WhatsAppStatus {
 export interface SetupStatus {
   needsSetup: boolean;
   setupCompleted: boolean;
+  /** Wizard resume cursor. 0 = never started. */
+  step: number;
   whatsapp: WhatsAppStatus;
+}
+
+// ---- one-click WooCommerce connection ----
+
+export interface WooStoreProbe {
+  reachable: boolean;
+  wordpress: boolean;
+  woocommerce: boolean;
+  prettyPermalinks: boolean;
+  name: string | null;
+}
+
+/**
+ * Why the server picked a path. `manual` is not a failure — on a local install
+ * it is the only thing WooCommerce's authentication endpoint permits, because
+ * it refuses any callback that is not public HTTPS.
+ */
+export type WooConnectMode = 'oauth' | 'manual' | 'env_locked';
+
+export interface WooConnectResult {
+  mode: WooConnectMode;
+  storeBase: string;
+  createKeyUrl: string;
+  probe?: WooStoreProbe;
+  reason?: 'no_public_https' | 'plain_permalinks';
+  requestId?: string;
+  authorizeUrl?: string;
+  expiresInSeconds?: number;
+}
+
+export type WooAuthStatus = 'pending' | 'delivered' | 'connected' | 'expired';
+
+export interface WooClaimResult {
+  ok: boolean;
+  error?: string;
+  storeBase?: string;
+  sampleProductName?: string | null;
+}
+
+// ---- site scan ----
+
+export type ScanState = 'crawling' | 'extracting' | 'done' | 'error' | 'cancelled';
+
+export type ProposalWarning = 'looks_like_instructions' | 'ungrounded_details';
+
+export interface ProposedField {
+  key: string;
+  value: string | number[][] | null;
+  sources: string[];
+  confidence: number;
+  warnings: ProposalWarning[];
+}
+
+export interface SiteScanJob {
+  id: string;
+  state: ScanState;
+  root: string;
+  progress: { pagesFound: number; pagesFetched: number; maxPages: number; currentUrl: string | null };
+  result: { fields: ProposedField[]; agentTone: string | null; pagesRead: string[] } | null;
+  error: string | null;
 }
 
 export interface SetupAdminInput {
@@ -336,6 +398,18 @@ export const api = {
   testWoo: (body: { url: string; consumerKey: string; consumerSecret: string; useStored?: boolean }) =>
     jpostLenient<TestWooResult>('/api/setup/test/woocommerce', body),
   setupComplete: () => jpost<{ ok: boolean }>('/api/setup/complete'),
+
+  // ---- one-click WooCommerce connection ----
+  wooConnect: (url: string) => jpost<WooConnectResult>('/api/setup/woocommerce/authorize', { url }),
+  wooAuthStatus: (requestId: string, signal?: AbortSignal) =>
+    jget<{ status: WooAuthStatus }>(`/api/setup/woocommerce/authorize/${requestId}/status`, signal),
+  wooClaim: (requestId: string) =>
+    jpostLenient<WooClaimResult>(`/api/setup/woocommerce/authorize/${requestId}/claim`),
+
+  // ---- site scan ----
+  startSiteScan: (url: string) => jpost<{ id: string }>('/api/setup/site-scan', { url }),
+  siteScan: (id: string, signal?: AbortSignal) => jget<SiteScanJob>(`/api/setup/site-scan/${id}`, signal),
+  cancelSiteScan: (id: string) => jdelete<{ ok: boolean }>(`/api/setup/site-scan/${id}`),
 
   // ---- WhatsApp pairing ----
   whatsappStatus: (signal?: AbortSignal) => jget<WhatsAppStatus>('/api/whatsapp/status', signal),

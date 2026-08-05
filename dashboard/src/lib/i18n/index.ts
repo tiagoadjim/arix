@@ -369,15 +369,44 @@ export interface Dictionary {
     runtimeDescription: string;
     refreshFailed: string;
   };
+  /**
+   * First-run wizard. Written for a shop owner who has never seen an API key:
+   * no jargon in a primary label, and every technical term either explained in
+   * place or hidden behind "Advanced".
+   */
   wizard: {
     stepProgress: string;
-    welcome: { title: string; subtitle: string; languagePrompt: string };
+    continueLater: string;
+    /** Rail labels — short enough to fit a 200px column. */
+    nav: {
+      account: string;
+      store: string;
+      ai: string;
+      learn: string;
+      whatsapp: string;
+      review: string;
+    };
+    welcome: {
+      title: string;
+      subtitle: string;
+      languagePrompt: string;
+      timeHint: string;
+      bulletStore: string;
+      bulletAi: string;
+      bulletWhatsapp: string;
+      start: string;
+    };
     admin: {
       title: string;
       subtitle: string;
       setupTokenLabel: string;
       setupTokenHint: string;
       setupTokenRequired: string;
+      whereIsToken: string;
+      tokenDockerHint: string;
+      tokenFileHint: string;
+      tokenOnceHint: string;
+      insecureWarning: string;
       nameLabel: string;
       emailLabel: string;
       passwordLabel: string;
@@ -390,14 +419,120 @@ export interface Dictionary {
       alreadyDone: string;
       loginLink: string;
     };
-    provider: { title: string; subtitle: string; skipLink: string };
-    store: { title: string; subtitle: string; skipLink: string };
-    skills: { title: string; subtitle: string; skipLink: string };
-    mcp: { title: string; subtitle: string; skipLink: string };
-    business: { title: string; subtitle: string };
+    store: {
+      title: string;
+      subtitle: string;
+      urlLabel: string;
+      urlPlaceholder: string;
+      urlHint: string;
+      connect: string;
+      checking: string;
+      foundStore: string;
+      notFound: string;
+      noWoo: string;
+      oauthTitle: string;
+      oauthBody: string;
+      oauthCta: string;
+      oauthWaiting: string;
+      oauthTimeout: string;
+      oauthDeclined: string;
+      manualTitle: string;
+      manualNoPublicHttps: string;
+      manualPlainPermalinks: string;
+      manualPreferred: string;
+      openKeysPage: string;
+      manualStep1: string;
+      manualStep2: string;
+      manualStep3: string;
+      manualStep4: string;
+      pasteLabel: string;
+      pastePlaceholder: string;
+      pasteDetected: string;
+      pasteMissing: string;
+      testCta: string;
+      connected: string;
+      connectedWithProduct: string;
+      envLocked: string;
+      advanced: string;
+      skipLink: string;
+    };
+    ai: {
+      title: string;
+      subtitle: string;
+      whatIsThis: string;
+      costNote: string;
+      keyLabel: string;
+      keyHint: string;
+      getKeyLink: string;
+      verify: string;
+      verifying: string;
+      verified: string;
+      noVision: string;
+      advanced: string;
+      skipLink: string;
+    };
+    learn: {
+      title: string;
+      subtitle: string;
+      urlLabel: string;
+      urlHint: string;
+      start: string;
+      crawling: string;
+      extracting: string;
+      pagesProgress: string;
+      stop: string;
+      llmRequired: string;
+      resultTitle: string;
+      resultSubtitle: string;
+      nothingFound: string;
+      current: string;
+      suggested: string;
+      empty: string;
+      sources: string;
+      acceptAll: string;
+      edit: string;
+      doneEditing: string;
+      warningInstructions: string;
+      warningUngrounded: string;
+      selectedCount: string;
+      save: string;
+      pagesReadTitle: string;
+      toneNote: string;
+      skipLink: string;
+      retry: string;
+      /** Plain-language name for each setting the scan can propose. */
+      fields: {
+        businessName: string;
+        timezone: string;
+        currency: string;
+        hours: string;
+        payment: string;
+        shipping: string;
+        general: string;
+        compliance: string;
+      };
+    };
     whatsapp: { title: string; subtitle: string; skipLink: string };
+    review: {
+      title: string;
+      subtitle: string;
+      configured: string;
+      pending: string;
+      storeRow: string;
+      aiRow: string;
+      knowledgeRow: string;
+      whatsappRow: string;
+      abilitiesRow: string;
+      abilitiesValue: string;
+      settingsHint: string;
+      finish: string;
+      finishing: string;
+    };
     done: { title: string; subtitle: string; goToDashboard: string };
     finishError: string;
+    /** Shown in the panel once the wizard has been postponed. */
+    resumeBanner: string;
+    resumeBannerCta: string;
   };
 }
 

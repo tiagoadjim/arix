@@ -1,7 +1,10 @@
 'use client';
 
+import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { ArrowRightIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useT } from '@/lib/i18n/provider';
 import { InboxList } from './inbox-list';
 
 /**
@@ -9,26 +12,51 @@ import { InboxList } from './inbox-list';
  * while tablets and desktops retain the two-pane workflow. `minmax(0, 1fr)`
  * is essential here so long messages cannot force the detail pane offscreen.
  */
-export function PanelShell({ children, canManageSettings }: { children: React.ReactNode; canManageSettings: boolean }) {
+export function PanelShell({
+  children,
+  canManageSettings,
+  setupUnfinished,
+}: {
+  children: React.ReactNode;
+  canManageSettings: boolean;
+  setupUnfinished?: boolean;
+}) {
   const pathname = usePathname();
+  const { t } = useT();
   const hasDetail = pathname !== '/';
 
   return (
-    <div className="grid h-dvh min-h-0 bg-background md:grid-cols-[300px_minmax(0,1fr)] xl:grid-cols-[360px_minmax(0,1fr)]">
-      <div
-        id={hasDetail ? undefined : 'main-content'}
-        tabIndex={hasDetail ? undefined : -1}
-        className={cn('min-h-0 outline-none md:block', hasDetail ? 'hidden' : 'block')}
-      >
-        <InboxList canManageSettings={canManageSettings} />
+    <div className="grid h-dvh min-h-0 grid-rows-[auto_minmax(0,1fr)] bg-background">
+      {/* An administrator who postponed the wizard still needs a way back into
+          it — the auto-launch redirect only fires on the root path. */}
+      {setupUnfinished && (
+        <Link
+          href="/setup"
+          className="flex items-center justify-center gap-2 bg-primary px-4 py-2 text-xs font-medium text-primary-foreground hover:brightness-110"
+        >
+          {t.wizard.resumeBanner}
+          <span className="inline-flex items-center gap-1 underline underline-offset-2">
+            {t.wizard.resumeBannerCta}
+            <ArrowRightIcon aria-hidden className="size-3" />
+          </span>
+        </Link>
+      )}
+      <div className="grid min-h-0 md:grid-cols-[300px_minmax(0,1fr)] xl:grid-cols-[360px_minmax(0,1fr)]">
+        <div
+          id={hasDetail ? undefined : 'main-content'}
+          tabIndex={hasDetail ? undefined : -1}
+          className={cn('min-h-0 outline-none md:block', hasDetail ? 'hidden' : 'block')}
+        >
+          <InboxList canManageSettings={canManageSettings} />
+        </div>
+        <main
+          id={hasDetail ? 'main-content' : undefined}
+          tabIndex={hasDetail ? -1 : undefined}
+          className={cn('min-h-0 flex-col outline-none md:flex', hasDetail ? 'flex' : 'hidden')}
+        >
+          {children}
+        </main>
       </div>
-      <main
-        id={hasDetail ? 'main-content' : undefined}
-        tabIndex={hasDetail ? -1 : undefined}
-        className={cn('min-h-0 flex-col outline-none md:flex', hasDetail ? 'flex' : 'hidden')}
-      >
-        {children}
-      </main>
     </div>
   );
 }

@@ -313,6 +313,13 @@ export async function setupCompleted(): Promise<boolean> {
   return valueOf<boolean>(meta, 'setup.completed');
 }
 
+/** Screen the first-run wizard should resume on (setup.step). 0 = not started. */
+export async function setupStep(): Promise<number> {
+  const meta = await resolve();
+  const raw = valueOf<number>(meta, 'setup.step');
+  return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 0;
+}
+
 /** Ids of built-in skills currently enabled for the agent. */
 export async function enabledSkills(): Promise<string[]> {
   const meta = await resolve();

@@ -12,6 +12,12 @@
     "resolveJsonModule": true,
     "forceConsistentCasingInFileNames": true,
     "types": ["node"],
+    // sharp 0.35.0 publishes an "exports" map with only "import"/"require"
+    // conditions. Under moduleResolution "Bundler" that map wins, the package's
+    // top-level "types" field is ignored, and the import resolves to an untyped
+    // .mjs. The declarations are shipped — they are just unreachable — so point
+    // at them directly. Drop this once sharp adds a "types" condition upstream.
+    "paths": { "sharp": ["./node_modules/sharp/lib/index.d.ts"] },
     "noEmit": true
   },
   "include": ["src/**/*.ts"]

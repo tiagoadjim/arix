@@ -4,7 +4,7 @@ type EventHandler = (payload: never) => void;
 
 // Fake Baileys socket + makeWASocket() factory. Each call returns a fresh
 // socket and retains registered callbacks so lifecycle races can be exercised.
-const { makeWASocketMock, sockets, DisconnectReason } = vi.hoisted(() => {
+const { makeWASocketMock, fetchLatestWaWebVersionMock, sockets, DisconnectReason } = vi.hoisted(() => {
   const sockets: Array<{
     ev: { on: ReturnType<typeof vi.fn>; removeAllListeners: ReturnType<typeof vi.fn> };
     end: ReturnType<typeof vi.fn>;
@@ -22,14 +22,16 @@ const { makeWASocketMock, sockets, DisconnectReason } = vi.hoisted(() => {
     sockets.push(sock);
     return sock;
   });
+  const fetchLatestWaWebVersionMock = vi.fn();
   const DisconnectReason = { loggedOut: 401, forbidden: 403, restartRequired: 515 };
-  return { makeWASocketMock, sockets, DisconnectReason };
+  return { makeWASocketMock, fetchLatestWaWebVersionMock, sockets, DisconnectReason };
 });
 
 vi.mock('baileys', () => ({
   __esModule: true,
   default: makeWASocketMock,
   DisconnectReason,
+  fetchLatestWaWebVersion: fetchLatestWaWebVersionMock,
 }));
 vi.mock('qrcode-terminal', () => ({ default: { generate: vi.fn() }, generate: vi.fn() }));
 
@@ -82,6 +84,10 @@ async function flushPromises(): Promise<void> {
 beforeEach(() => {
   sockets.length = 0;
   makeWASocketMock.mockClear();
+  fetchLatestWaWebVersionMock.mockReset().mockResolvedValue({
+    version: [2, 3000, 1_044_539_926],
+    isLatest: true,
+  });
   loggerMock.info.mockReset();
   loggerMock.warn.mockReset();
   loggerMock.error.mockReset();
@@ -94,6 +100,36 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers());
 
 describe('WhatsAppGateway lifecycle', () => {
+  it('creates the socket with the current WhatsApp Web revision', async () => {
+    const gateway = new WhatsAppGateway();
+
+    await gateway.start();
+
+    expect(fetchLatestWaWebVersionMock).toHaveBeenCalledTimes(1);
+    expect(makeWASocketMock).toHaveBeenCalledWith(
+      expect.objectContaining({ version: [2, 3000, 1_044_539_926] }),
+    );
+  });
+
+  it('uses the Baileys fallback and logs a safe warning when version lookup fails', async () => {
+    fetchLatestWaWebVersionMock.mockResolvedValueOnce({
+      version: [2, 3000, 1_035_194_821],
+      isLatest: false,
+      error: new Error('lookup failed'),
+    });
+    const gateway = new WhatsAppGateway();
+
+    await gateway.start();
+
+    expect(makeWASocketMock).toHaveBeenCalledWith(
+      expect.objectContaining({ version: [2, 3000, 1_035_194_821] }),
+    );
+    expect(loggerMock.warn).toHaveBeenCalledWith(
+      { errorType: 'Error', fallbackVersion: '2.3000.1035194821' },
+      'could not resolve current WhatsApp Web version; using Baileys fallback',
+    );
+  });
+
   it('coalesces concurrent start calls into one auth read and one socket', async () => {
     const pending = deferred<ReturnType<typeof authState>>();
     usePostgresAuthState.mockReturnValueOnce(pending.promise);
@@ -150,6 +186,22 @@ describe('WhatsAppGateway lifecycle', () => {
 });
 
 describe('WhatsAppGateway.restart()', () => {
+  it('resolves the WhatsApp Web revision again for the replacement socket', async () => {
+    fetchLatestWaWebVersionMock
+      .mockResolvedValueOnce({ version: [2, 3000, 1_044_000_001], isLatest: true })
+      .mockResolvedValueOnce({ version: [2, 3000, 1_044_000_002], isLatest: true });
+    const gateway = new WhatsAppGateway();
+
+    await gateway.start();
+    await gateway.restart();
+
+    expect(fetchLatestWaWebVersionMock).toHaveBeenCalledTimes(2);
+    expect(makeWASocketMock.mock.calls.map(([options]) => options.version)).toEqual([
+      [2, 3000, 1_044_000_001],
+      [2, 3000, 1_044_000_002],
+    ]);
+  });
+
   it('without clearSession tears down and reconnects with the same stored creds', async () => {
     const gateway = new WhatsAppGateway();
     await gateway.start();
@@ -234,6 +286,20 @@ describe('WhatsAppGateway.restart()', () => {
 });
 
 describe('WhatsAppGateway async event serialization', () => {
+  it('publishes an emitted pairing QR and clears it once connected', async () => {
+    const gateway = new WhatsAppGateway();
+    await gateway.start();
+    const onConnectionUpdate = handler(sockets[0]!, 'connection.update');
+
+    onConnectionUpdate({ qr: 'qr-data' } as never);
+    expect(gateway.latestQR).toBe('qr-data');
+    expect(gateway.connected).toBe(false);
+
+    onConnectionUpdate({ connection: 'open' } as never);
+    expect(gateway.latestQR).toBeNull();
+    expect(gateway.connected).toBe(true);
+  });
+
   it('drains every admitted per-JID message before closing the transport', async () => {
     const handled = deferred<void>();
     const gateway = new WhatsAppGateway();

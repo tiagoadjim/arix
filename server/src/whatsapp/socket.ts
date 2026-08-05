@@ -1,5 +1,6 @@
 import makeWASocket, {
   DisconnectReason,
+  fetchLatestWaWebVersion,
   type WASocket,
   type WAMessage,
   type AnyMessageContent,
@@ -53,6 +54,7 @@ async function withTimeout<T>(operation: Promise<T>, ms: number, message: string
 
 const MESSAGE_DRAIN_TIMEOUT_MS = Math.min(config.SHUTDOWN_TIMEOUT_MS, 10_000);
 const LOGOUT_TIMEOUT_MS = 5_000;
+const WA_VERSION_TIMEOUT_MS = 10_000;
 const CREDENTIAL_WRITE_ATTEMPTS = 3;
 const CREDENTIAL_RETRY_BASE_MS = 250;
 
@@ -157,15 +159,34 @@ export class WhatsAppGateway {
 
     if (this.stopped || expectedGeneration !== this.generation) return;
     if (this.credentialsFailure) throw this.credentialsFailure;
-    const { state, saveCreds, clearState } = await usePostgresAuthState(config.WA_ACCOUNT_ID);
+    const [{ state, saveCreds, clearState }, versionResult] = await Promise.all([
+      usePostgresAuthState(config.WA_ACCOUNT_ID),
+      fetchLatestWaWebVersion({ signal: AbortSignal.timeout(WA_VERSION_TIMEOUT_MS) }),
+    ]);
 
-    // A restart/stop may have won while Postgres was loading. Do not expose a
-    // socket (or even its state clearer) from the obsolete generation.
+    // A restart/stop may have won while Postgres or the WA Web revision was
+    // loading. Do not expose a socket (or even its state clearer) from the
+    // obsolete generation.
     if (this.stopped || expectedGeneration !== this.generation) return;
     this.clearState = clearState;
 
+    // Baileys ships a WA Web revision that eventually becomes stale. WhatsApp
+    // rejects that revision before emitting a QR, leaving fresh installations
+    // stuck forever. Resolve the live revision for every socket generation so
+    // an automatic reconnect can recover as soon as the lookup succeeds.
+    if (!versionResult.isLatest) {
+      logger.warn(
+        {
+          errorType: versionResult.error instanceof Error ? versionResult.error.name : typeof versionResult.error,
+          fallbackVersion: versionResult.version.join('.'),
+        },
+        'could not resolve current WhatsApp Web version; using Baileys fallback',
+      );
+    }
+
     const sock = makeWASocket({
       auth: state,
+      version: versionResult.version,
       logger: logger as never,
       markOnlineOnConnect: config.WA_MARK_ONLINE,
       // Avoid heavy full-history sync; we only care about live messages.

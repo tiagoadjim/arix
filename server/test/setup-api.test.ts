@@ -971,4 +971,13 @@ describe('GET /api/qr', () => {
     const res = await request(app).get('/api/qr');
     expect(res.status).toBe(401);
   });
+
+  it('returns the latest pairing payload to an authenticated admin', async () => {
+    const app = createApiServer({ gateway: fakeGateway({ latestQR: 'qr-data' }) });
+    const res = await request(app).get('/api/qr').set('Cookie', await authCookie());
+
+    expect(res.status).toBe(200);
+    expect(res.type).toBe('text/plain');
+    expect(res.text).toBe('qr-data');
+  });
 });

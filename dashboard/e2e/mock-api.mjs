@@ -162,6 +162,10 @@ async function sessionCookie(role = 'admin') {
   return `arix_session=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=3600`;
 }
 
+function hasSessionCookie(req) {
+  return /(?:^|;\s*)arix_session=[^;]+/.test(req.headers.cookie ?? '');
+}
+
 function updateSettings(updates) {
   state.lastSettingsUpdate = updates;
   for (const update of updates) {
@@ -406,6 +410,9 @@ async function handle(req, res) {
     return json(res, 200, { orders: [] });
   }
 
+  if (pathname === '/api/settings' && !hasSessionCookie(req)) {
+    return json(res, 401, { error: 'unauthorized' });
+  }
   if (pathname === '/api/settings' && method === 'GET') return json(res, 200, state.settings);
   if (pathname === '/api/settings' && method === 'PUT') {
     const body = await readJson(req);

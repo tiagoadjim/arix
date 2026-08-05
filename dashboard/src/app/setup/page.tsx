@@ -122,11 +122,11 @@ function SetupWizard() {
   }, []);
 
   const goTo = useCallback(
-    (next: Screen) => {
+    (next: Screen, persist = true) => {
       const index = STEPS.indexOf(next as StepId);
       if (index >= 0) {
         setFurthest((current) => Math.max(current, index));
-        persistStep(index);
+        if (persist) persistStep(index);
       }
       setScreen(next);
       window.scrollTo({ top: 0 });
@@ -179,7 +179,14 @@ function SetupWizard() {
             <h1 className="text-3xl font-semibold tracking-tight text-balance">{t.wizard.welcome.title}</h1>
             <p className="text-sm text-muted-foreground text-pretty">{t.wizard.welcome.subtitle}</p>
           </div>
-          <WelcomeStep uiLanguage={uiLanguage} onPickLanguage={pickLanguage} onStart={() => goTo('account')} />
+          <WelcomeStep
+            uiLanguage={uiLanguage}
+            onPickLanguage={pickLanguage}
+            // No administrator exists yet, so persisting the resume cursor here
+            // would call the protected settings API and misread its 401 as an
+            // expired staff session. Persistence starts after account creation.
+            onStart={() => goTo('account', false)}
+          />
         </div>
       </main>
     );

@@ -25,7 +25,9 @@ async function createFirstAdmin(page: Page) {
   await page.getByRole('button', { name: 'English' }).click();
   await page.getByRole('button', { name: 'Get started' }).click();
 
+  await expect(page).toHaveURL(/\/setup(?:\?.*)?$/);
   await expect(page.getByRole('heading', { name: 'Create your account' })).toBeVisible();
+  await expect(page.getByText('Your session expired. Please sign in again.')).toHaveCount(0);
   await page.getByLabel('One-time setup code').fill('e2e-setup-token-at-least-32-characters-long');
   await page.getByLabel('Your name').fill('E2E Admin');
   await page.getByLabel('Email').fill('owner@example.com');

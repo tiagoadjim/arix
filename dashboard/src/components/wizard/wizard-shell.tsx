@@ -53,7 +53,7 @@ export function WizardShell({
   const numbered = currentIndex >= 0;
 
   return (
-    <div className="min-h-dvh bg-background lg:grid lg:grid-cols-[260px_minmax(0,1fr)]">
+    <div className="min-h-dvh bg-background pr-[var(--safe-right)] pl-[var(--safe-left)] lg:grid lg:grid-cols-[260px_minmax(0,1fr)]">
       <aside className="hidden border-r bg-card/40 p-6 lg:flex lg:flex-col lg:gap-8">
         <Logo markClassName="h-7 w-7 text-primary" />
         <nav aria-label={title}>
@@ -112,8 +112,9 @@ export function WizardShell({
       </aside>
 
       <div className="flex min-h-dvh flex-col">
-        {/* Compact rail replacement below lg — same information, one line. */}
-        <div className="flex items-center gap-3 border-b px-4 py-3 lg:hidden">
+        {/* Compact rail replacement below lg — same information, one line.
+            Sticky so the step count stays visible while a long form scrolls. */}
+        <div className="sticky top-0 z-20 flex items-center gap-3 border-b bg-background px-4 py-3 pt-[max(0.75rem,var(--safe-top))] lg:hidden">
           <Logo markClassName="h-6 w-6 text-primary" />
           {numbered && (
             <div className="flex min-w-0 flex-1 flex-col gap-1">
@@ -131,7 +132,7 @@ export function WizardShell({
           tabIndex={-1}
           className="flex-1 outline-none xl:grid xl:grid-cols-[minmax(0,1fr)_300px] xl:gap-10 xl:px-10"
         >
-          <div className="mx-auto w-full max-w-2xl px-5 py-10 xl:px-0">
+          <div className="mx-auto w-full max-w-2xl px-4 py-8 pb-[max(2rem,var(--safe-bottom))] sm:px-5 sm:py-10 xl:px-0">
             <header className="mb-8 flex flex-col gap-2">
               <h1 className="text-2xl font-semibold tracking-tight text-balance">{title}</h1>
               {subtitle && <p className="text-sm text-muted-foreground text-pretty">{subtitle}</p>}

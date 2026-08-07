@@ -42,45 +42,50 @@ export function HoursEditor({ value, onChange, disabled }: HoursEditorProps) {
           updateDay(index, [hhmmToMinutes(openInput), hhmmToMinutes(closeInput) + (nextDayInput ? 1440 : 0)]);
 
         return (
+          // Phones stack the day and its open/closed switch on one line and the
+          // times underneath. Letting all five controls wrap freely, as they do
+          // from `sm` up, scattered them over four uneven lines per weekday.
           <div
             key={index}
-            className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-md border border-border bg-muted/40 px-3 py-2.5"
+            className="flex flex-col gap-3 rounded-md border border-border bg-muted/40 px-3 py-2.5 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-4 sm:gap-y-2"
           >
-            <span className="w-24 shrink-0 text-sm font-medium capitalize">{label}</span>
+            <div className="flex items-center justify-between gap-3 sm:contents">
+              <span className="text-sm font-medium capitalize sm:w-24 sm:shrink-0">{label}</span>
 
-            <Label className="flex items-center gap-2 text-xs text-muted-foreground">
-              <Switch
-                size="sm"
-                checked={!closed}
-                disabled={disabled}
-                onCheckedChange={(checked) => (checked ? setWindow(openStr, closeStr, nextDay) : updateDay(index, null))}
-              />
-              {closed ? t.settings.business.hoursClosedLabel : t.settings.business.hoursOpenLabel}
-            </Label>
+              <Label className="flex items-center gap-2 text-xs text-muted-foreground">
+                <Switch
+                  size="sm"
+                  checked={!closed}
+                  disabled={disabled}
+                  onCheckedChange={(checked) => (checked ? setWindow(openStr, closeStr, nextDay) : updateDay(index, null))}
+                />
+                {closed ? t.settings.business.hoursClosedLabel : t.settings.business.hoursOpenLabel}
+              </Label>
+            </div>
 
             {!closed && (
-              <>
-                <div className="flex items-center gap-1.5">
-                  <Label htmlFor={`hours-open-${index}`} className="text-xs text-muted-foreground">
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-2 sm:contents">
+                <div className="flex min-w-0 flex-1 items-center gap-1.5 sm:flex-none">
+                  <Label htmlFor={`hours-open-${index}`} className="shrink-0 text-xs text-muted-foreground">
                     {t.settings.business.hoursOpenLabel}
                   </Label>
                   <Input
                     id={`hours-open-${index}`}
                     type="time"
-                    className="w-28"
+                    className="w-full min-w-0 sm:w-28"
                     value={openStr}
                     disabled={disabled}
                     onChange={(e) => setWindow(e.target.value, closeStr, nextDay)}
                   />
                 </div>
-                <div className="flex items-center gap-1.5">
-                  <Label htmlFor={`hours-close-${index}`} className="text-xs text-muted-foreground">
+                <div className="flex min-w-0 flex-1 items-center gap-1.5 sm:flex-none">
+                  <Label htmlFor={`hours-close-${index}`} className="shrink-0 text-xs text-muted-foreground">
                     {t.settings.business.hoursCloseLabel}
                   </Label>
                   <Input
                     id={`hours-close-${index}`}
                     type="time"
-                    className="w-28"
+                    className="w-full min-w-0 sm:w-28"
                     value={closeStr}
                     disabled={disabled}
                     onChange={(e) => setWindow(openStr, e.target.value, nextDay)}
@@ -95,7 +100,7 @@ export function HoursEditor({ value, onChange, disabled }: HoursEditorProps) {
                   />
                   {t.settings.business.hoursNextDayLabel}
                 </Label>
-              </>
+              </div>
             )}
           </div>
         );

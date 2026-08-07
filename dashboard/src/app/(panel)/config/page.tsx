@@ -84,7 +84,7 @@ export default function SettingsPage() {
   }
 
   return (
-    <div className="mx-auto flex h-full w-full max-w-3xl flex-col gap-4 overflow-y-auto p-4 sm:p-6">
+    <div className="mx-auto flex h-full w-full max-w-3xl flex-col gap-4 overflow-y-auto overscroll-contain p-4 pb-[max(1rem,var(--safe-bottom))] sm:p-6 sm:pb-[max(1.5rem,var(--safe-bottom))]">
       <div className="flex items-start gap-2">
         <Button variant="ghost" size="icon-sm" asChild className="mt-0.5 shrink-0 md:hidden">
           <Link href="/" aria-label={t.sidebar.backToInbox} title={t.sidebar.backToInbox}>

@@ -172,7 +172,7 @@ function SetupWizard() {
 
   if (screen === 'welcome') {
     return (
-      <main id="main-content" tabIndex={-1} className="grid min-h-dvh place-items-center bg-background p-5 outline-none">
+      <main id="main-content" tabIndex={-1} className="grid min-h-dvh place-items-center bg-background p-5 pt-[max(1.25rem,var(--safe-top))] pr-[max(1.25rem,var(--safe-right))] pb-[max(1.25rem,var(--safe-bottom))] pl-[max(1.25rem,var(--safe-left))] outline-none">
         <div className="flex w-full max-w-lg flex-col gap-8">
           <Logo markClassName="h-8 w-8 text-primary" />
           <div className="flex flex-col gap-2">
@@ -194,7 +194,7 @@ function SetupWizard() {
 
   if (screen === 'done') {
     return (
-      <main id="main-content" tabIndex={-1} className="grid min-h-dvh place-items-center bg-background p-5 outline-none">
+      <main id="main-content" tabIndex={-1} className="grid min-h-dvh place-items-center bg-background p-5 pt-[max(1.25rem,var(--safe-top))] pr-[max(1.25rem,var(--safe-right))] pb-[max(1.25rem,var(--safe-bottom))] pl-[max(1.25rem,var(--safe-left))] outline-none">
         <div className="flex max-w-md flex-col items-center gap-5 text-center">
           <CheckCircle2Icon aria-hidden className="size-12 text-success" />
           <div className="flex flex-col gap-1">

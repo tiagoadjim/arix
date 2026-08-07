@@ -148,16 +148,18 @@ export function StaffPanel() {
           <CardDescription>{t.settings.staff.newHint}</CardDescription>
         </CardHeader>
         <CardContent>
-          <form onSubmit={(e) => void handleCreate(e)} className="flex flex-wrap items-end gap-3">
-            <div className="flex min-w-40 flex-1 flex-col gap-1.5">
+          {/* A single column on phones: four fields wrapping by `min-width`
+              produced half-empty rows at every width between 360 and 640px. */}
+          <form onSubmit={(e) => void handleCreate(e)} className="grid gap-3 sm:grid-cols-2">
+            <div className="flex flex-col gap-1.5">
               <Label htmlFor="staff-name">{t.settings.staff.nameLabel}</Label>
               <Input id="staff-name" value={name} onChange={(e) => setName(e.target.value)} />
             </div>
-            <div className="flex min-w-48 flex-1 flex-col gap-1.5">
+            <div className="flex flex-col gap-1.5">
               <Label htmlFor="staff-email">{t.settings.staff.emailLabel}</Label>
               <Input id="staff-email" type="email" autoComplete="off" value={email} onChange={(e) => setEmail(e.target.value)} required />
             </div>
-            <div className="flex min-w-48 flex-1 flex-col gap-1.5">
+            <div className="flex flex-col gap-1.5">
               <Label htmlFor="staff-password">{t.settings.staff.passwordLabel}</Label>
               <Input
                 id="staff-password"
@@ -168,10 +170,10 @@ export function StaffPanel() {
                 required
               />
             </div>
-            <div className="flex min-w-40 flex-1 flex-col gap-1.5">
+            <div className="flex flex-col gap-1.5">
               <Label htmlFor="staff-role">{t.settings.staff.roleLabel}</Label>
               <Select value={role} onValueChange={(value) => setRole(value as StaffRole)} disabled={creating}>
-                <SelectTrigger id="staff-role">
+                <SelectTrigger id="staff-role" className="w-full">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -180,7 +182,7 @@ export function StaffPanel() {
                 </SelectContent>
               </Select>
             </div>
-            <Button type="submit" disabled={creating}>
+            <Button type="submit" disabled={creating} className="w-full sm:col-span-2 sm:w-fit sm:justify-self-start">
               {creating ? t.settings.staff.creating : t.settings.staff.createButton}
             </Button>
           </form>
@@ -200,18 +202,28 @@ export function StaffPanel() {
           )}
           {agents !== null && agents.length === 0 && <p className="text-sm text-muted-foreground">{t.settings.staff.emptyList}</p>}
           {agents?.map((a) => (
-            <div key={a.id} className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-border px-3 py-2.5">
-              <div>
-                <p className="text-sm font-medium">{a.name || '—'}</p>
-                <p className="text-xs text-muted-foreground">{a.email}</p>
+            // Identity above, controls below on phones — side by side the role
+            // select alone claimed half the width and the two buttons wrapped
+            // into a ragged third line.
+            <div
+              key={a.id}
+              className="flex flex-col gap-3 rounded-md border border-border px-3 py-2.5 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between"
+            >
+              <div className="min-w-0">
+                <p className="truncate text-sm font-medium">{a.name || '—'}</p>
+                <p className="truncate text-xs text-muted-foreground">{a.email}</p>
               </div>
-              <div className="flex flex-wrap items-center justify-end gap-2">
+              <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center sm:justify-end">
                 <Select
                   value={a.role}
                   onValueChange={(value) => void handleRoleChange(a, value as StaffRole)}
                   disabled={roleBusy[a.id]}
                 >
-                  <SelectTrigger size="sm" className="w-36" aria-label={`${t.settings.staff.roleLabel}: ${a.name || a.email}`}>
+                  <SelectTrigger
+                    size="sm"
+                    className="col-span-2 w-full sm:w-36"
+                    aria-label={`${t.settings.staff.roleLabel}: ${a.name || a.email}`}
+                  >
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -223,6 +235,7 @@ export function StaffPanel() {
                   type="button"
                   variant="outline"
                   size="sm"
+                  className="min-w-0"
                   onClick={() => {
                     setResetTarget(a);
                     setResetPassword('');
@@ -230,11 +243,11 @@ export function StaffPanel() {
                   }}
                 >
                   <KeyRoundIcon className="size-3.5" />
-                  {t.settings.staff.resetPasswordButton}
+                  <span className="truncate">{t.settings.staff.resetPasswordButton}</span>
                 </Button>
-                <Button type="button" variant="outline" size="sm" onClick={() => setDeleteTarget(a)}>
+                <Button type="button" variant="outline" size="sm" className="min-w-0" onClick={() => setDeleteTarget(a)}>
                   <Trash2Icon className="size-3.5" />
-                  {t.settings.staff.deleteButton}
+                  <span className="truncate">{t.settings.staff.deleteButton}</span>
                 </Button>
               </div>
             </div>

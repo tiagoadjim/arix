@@ -424,9 +424,21 @@ export function Conversation({ conversationId }: { conversationId: string }) {
           </div>
         </div>
         <div className="flex min-w-0 flex-wrap items-center justify-end gap-2 max-sm:w-full">
-          <Badge variant={isHuman ? 'warning' : 'outline'} className={cn(!isHuman && 'text-muted-foreground')}>
+          {/* The mode label is spelled out from `sm` up. On a phone the four
+              controls together overflow the row and push refresh onto a line of
+              its own, so the badge keeps only its icon — the adjacent button
+              ("Take chat" / "Return to Arix") already names the current mode,
+              and the accessible name below carries the full wording. */}
+          <Badge
+            variant={isHuman ? 'warning' : 'outline'}
+            className={cn('shrink-0', !isHuman && 'text-muted-foreground')}
+            aria-label={isHuman ? t.conversation.modeHuman : t.conversation.modeBot}
+            title={isHuman ? t.conversation.modeHuman : t.conversation.modeBot}
+          >
             {isHuman ? <UserIcon className="size-3" /> : <BotIcon className="size-3" />}
-            {isHuman ? t.conversation.modeHuman : t.conversation.modeBot}
+            <span aria-hidden className="max-sm:hidden">
+              {isHuman ? t.conversation.modeHuman : t.conversation.modeBot}
+            </span>
           </Badge>
           {isHuman ? (
             <Button variant="outline" size="sm" onClick={() => void setMode('bot')}>
@@ -452,7 +464,7 @@ export function Conversation({ conversationId }: { conversationId: string }) {
         <section className="relative flex min-h-0" aria-label={t.conversation.messagesLabel}>
           <div
             ref={messageListRef}
-            className="flex min-w-0 flex-1 flex-col gap-2 overflow-y-auto p-3 sm:p-4"
+            className="flex min-w-0 flex-1 flex-col gap-2 overflow-y-auto overscroll-contain p-3 sm:p-4"
             role="log"
             aria-live="polite"
             aria-relevant="additions text"
@@ -522,14 +534,14 @@ export function Conversation({ conversationId }: { conversationId: string }) {
         </section>
 
         {wideDetails && (
-          <aside className="hidden min-h-0 flex-col gap-4 overflow-y-auto border-l border-border bg-card p-4 xl:flex" aria-label={t.conversation.detailsTitle}>
+          <aside className="hidden min-h-0 flex-col gap-4 overflow-y-auto overscroll-contain border-l border-border bg-card p-4 xl:flex" aria-label={t.conversation.detailsTitle}>
             {details}
           </aside>
         )}
       </div>
 
       {isHuman ? (
-        <div className="flex items-end gap-2 border-t border-border bg-card px-3 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+        <div className="flex items-end gap-2 border-t border-border bg-card px-3 pt-3 pb-[max(0.75rem,var(--safe-bottom))]">
           <Textarea
             placeholder={t.conversation.composerPlaceholder}
             value={text}
@@ -554,13 +566,15 @@ export function Conversation({ conversationId }: { conversationId: string }) {
           </Button>
         </div>
       ) : (
-        <p className="border-t border-border p-3 text-xs text-muted-foreground" role="status">{t.conversation.botHint}</p>
+        <p className="border-t border-border p-3 pb-[max(0.75rem,var(--safe-bottom))] text-xs text-muted-foreground" role="status">
+          {t.conversation.botHint}
+        </p>
       )}
 
       {!wideDetails && (
         <DialogContent
           showCloseButton={false}
-          className="top-0 right-0 left-auto h-dvh w-[min(100%,24rem)] max-w-none translate-x-0 translate-y-0 grid-rows-[auto_minmax(0,1fr)] gap-0 rounded-none p-0 sm:max-w-sm"
+          className="top-0 right-0 left-auto h-[var(--app-height)] max-h-none w-[min(100%,24rem)] max-w-none translate-x-0 translate-y-0 grid-rows-[auto_minmax(0,1fr)] gap-0 overflow-y-hidden rounded-none p-0 pt-[var(--safe-top)] pr-[var(--safe-right)] sm:max-w-sm sm:p-0"
         >
           <DialogHeader className="flex-row items-center justify-between border-b border-border p-4 text-left">
             <div>
@@ -573,7 +587,9 @@ export function Conversation({ conversationId }: { conversationId: string }) {
               </Button>
             </DialogClose>
           </DialogHeader>
-          <div className="flex min-h-0 flex-col gap-4 overflow-y-auto bg-card p-4">{details}</div>
+          <div className="flex min-h-0 flex-col gap-4 overflow-y-auto overscroll-contain bg-card p-4 pb-[max(1rem,var(--safe-bottom))]">
+            {details}
+          </div>
         </DialogContent>
       )}
     </Dialog>

@@ -8,6 +8,18 @@
 :root {
   --radius: 0.625rem;
 
+  /* Height of the area actually visible right now. `useAppHeight` overwrites
+     this with the VisualViewport height while a software keyboard is open;
+     until then (and on every desktop) the dynamic viewport unit is correct. */
+  --app-height: 100dvh;
+
+  /* Safe-area insets, resolved once so components can compose them with
+     `max()` without repeating the `env()` fallback chain. */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+
   /* ---- Arix tokens — LIGHT theme ------------------------------------- */
   --background: oklch(0.985 0.003 260);
   --foreground: oklch(0.22 0.008 260);
@@ -139,10 +151,18 @@
     margin: 0;
     padding: 0;
   }
+  html {
+    /* iOS Safari otherwise inflates body text when a phone turns landscape. */
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
   body {
     @apply bg-background text-foreground;
     font-family: var(--font-geist-sans), ui-sans-serif, system-ui, -apple-system, sans-serif;
     font-feature-settings: 'cv11', 'ss01';
+    /* Grey flash on every tap reads as a web page, not an app. Focus-visible
+       rings still mark keyboard focus, so nothing accessible is lost. */
+    -webkit-tap-highlight-color: transparent;
   }
   a {
     color: inherit;
@@ -150,9 +170,64 @@
   button {
     cursor: pointer;
   }
+  /* Controls that exist to be tapped should never hand the browser a reason to
+     wait 300ms deciding whether the gesture was a double-tap zoom. */
+  a,
+  button,
+  label,
+  select,
+  summary,
+  [role='button'],
+  [role='tab'] {
+    touch-action: manipulation;
+  }
 
   :focus-visible {
     scroll-margin-block: 1rem;
+  }
+}
+
+/* The panel routes are a fixed-height app shell with their own scroll
+   containers, so the document itself must not scroll — otherwise iOS rubber
+   -bands the whole shell when a message list reaches its end. `useAppHeight`
+   adds and removes this class with the shell's lifetime, which keeps the
+   scrolling wizard and login routes untouched. */
+body.app-shell-locked {
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+/* Touch targets. The compact button sizes are deliberate on a desktop
+   pointer — at 24-32px they keep dense toolbars readable — but a finger needs
+   ~44px. Growing an invisible hit area instead of the button itself keeps
+   every existing layout pixel-identical while making all of it tappable. */
+@media (pointer: coarse) {
+  [data-slot='button'][data-size='xs'],
+  [data-slot='button'][data-size='sm'],
+  [data-slot='button'][data-size='icon-xs'],
+  [data-slot='button'][data-size='icon-sm'] {
+    position: relative;
+  }
+
+  [data-slot='button'][data-size='xs']::after,
+  [data-slot='button'][data-size='sm']::after,
+  [data-slot='button'][data-size='icon-xs']::after,
+  [data-slot='button'][data-size='icon-sm']::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    height: 100%;
+    width: 100%;
+    min-height: 44px;
+    transform: translate(-50%, -50%);
+  }
+
+  /* Icon buttons are square, so they need the horizontal half too. Text
+     buttons keep their own width to avoid overlapping a neighbour in a row. */
+  [data-slot='button'][data-size='icon-xs']::after,
+  [data-slot='button'][data-size='icon-sm']::after {
+    min-width: 44px;
   }
 }
 

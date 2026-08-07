@@ -41,7 +41,11 @@ export default function LoginPage() {
   }
 
   return (
-    <main id="main-content" tabIndex={-1} className="grid min-h-dvh place-items-center bg-background p-4 outline-none">
+    <main
+      id="main-content"
+      tabIndex={-1}
+      className="grid min-h-dvh place-items-center bg-background p-4 pt-[max(1rem,var(--safe-top))] pr-[max(1rem,var(--safe-right))] pb-[max(1rem,var(--safe-bottom))] pl-[max(1rem,var(--safe-left))] outline-none"
+    >
       <Card className="w-full max-w-sm">
         <CardHeader className="flex flex-col items-center gap-3 text-center">
           <Logo markClassName="h-8 w-8 text-primary" />

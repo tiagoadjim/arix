@@ -195,7 +195,9 @@ export function InboxList({ canManageSettings }: { canManageSettings: boolean })
         </Alert>
       )}
 
-      <div className="flex-1 overflow-y-auto" aria-busy={fetching} aria-live="polite">
+      {/* `overscroll-contain` stops a flick past the last conversation from
+          rubber-banding the shell behind it on iOS. */}
+      <div className="flex-1 overflow-y-auto overscroll-contain" aria-busy={fetching} aria-live="polite">
         {list === null &&
           Array.from({ length: 6 }).map((_, i) => (
             <div key={i} className="flex items-center gap-3 border-b border-border px-4 py-3">
@@ -268,7 +270,9 @@ export function InboxList({ canManageSettings }: { canManageSettings: boolean })
         )}
       </div>
 
-      <div className="border-t border-border p-2">
+      {/* Last element on the page when a phone shows the inbox alone, so it
+          owns the home-indicator gap. */}
+      <div className="border-t border-border p-2 pb-[max(0.5rem,var(--safe-bottom))]">
         {canManageSettings && (
           <nav className="mb-1 grid grid-cols-2 gap-1" aria-label={t.sidebar.adminNavLabel}>
             <Button variant="ghost" size="sm" className="min-w-0 justify-start gap-1.5" asChild>

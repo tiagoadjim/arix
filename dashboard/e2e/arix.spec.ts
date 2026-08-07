@@ -105,11 +105,17 @@ test('the website scan proposes settings and saves only what was kept', async ({
   await expect(shipping).toBeChecked();
   await expect(payment).not.toBeChecked();
 
+  // Assert on the save request itself. Advancing to the next screen fires its
+  // own unawaited `setup.step` write moments later, so reading the mock's
+  // "last update" afterwards is a race over which of the two landed first.
+  const save = page.waitForRequest(
+    (candidate) => candidate.url().endsWith('/api/settings') && candidate.method() === 'PUT',
+  );
   await page.getByRole('button', { name: 'Save what I kept' }).click();
-  const state = await (await request.get(`${mockApiUrl}/__e2e/state`)).json();
-  expect(state.lastSettingsUpdate).toEqual([
-    { key: 'info.shipping', value: 'We ship nationwide in 3 to 5 business days.' },
-  ]);
+
+  expect((await save).postDataJSON()).toEqual({
+    updates: [{ key: 'info.shipping', value: 'We ship nationwide in 3 to 5 business days.' }],
+  });
 });
 
 test('staff can sign in and see the inbox', async ({ page }) => {

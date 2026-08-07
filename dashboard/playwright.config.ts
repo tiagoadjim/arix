@@ -22,8 +22,25 @@ export default defineConfig({
   },
   projects: [
     {
+      // The functional suite asserts against the desktop two-pane layout, so
+      // it stays on one wide viewport. Layout behaviour is covered separately.
       name: 'chromium',
       use: { ...devices['Desktop Chrome'] },
+      testIgnore: /responsive\.spec\.ts/,
+    },
+    {
+      name: 'mobile',
+      use: { ...devices['Pixel 5'] },
+      testMatch: /responsive\.spec\.ts/,
+    },
+    {
+      // Tablet portrait: past the `md` breakpoint that restores the two-pane
+      // console, but short of the `xl` one that docks the details column — the
+      // band where both layouts have to hold up at once. Spelled out rather
+      // than taken from `devices` because the iPad presets default to WebKit.
+      name: 'tablet',
+      use: { ...devices['Desktop Chrome'], viewport: { width: 820, height: 1180 }, hasTouch: true },
+      testMatch: /responsive\.spec\.ts/,
     },
   ],
   webServer: [

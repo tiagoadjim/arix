@@ -92,8 +92,8 @@ export default function AnalyticsPage() {
   );
 
   return (
-    <div className="h-full overflow-y-auto" aria-busy={loading}>
-      <div className="mx-auto flex w-full max-w-6xl flex-col gap-5 p-4 sm:p-6">
+    <div className="h-full overflow-y-auto overscroll-contain" aria-busy={loading}>
+      <div className="mx-auto flex w-full max-w-6xl flex-col gap-5 p-4 pb-[max(1rem,var(--safe-bottom))] sm:p-6 sm:pb-[max(1.5rem,var(--safe-bottom))]">
         <header className="flex flex-wrap items-start justify-between gap-3">
           <div className="flex min-w-0 items-start gap-2">
             <Button variant="ghost" size="icon-sm" asChild className="mt-0.5 shrink-0 md:hidden">
@@ -182,7 +182,7 @@ export default function AnalyticsPage() {
 
           <TabsContent value="usage" className="pt-3">
             <Card className="gap-4 py-5">
-              <CardHeader className="px-5">
+              <CardHeader className="px-4 sm:px-5">
                 <CardTitle>{t.analytics.usageTitle}</CardTitle>
                 <CardDescription>{t.analytics.usageDescription}</CardDescription>
               </CardHeader>
@@ -194,11 +194,11 @@ export default function AnalyticsPage() {
 
           <TabsContent value="audit" className="pt-3">
             <Card className="gap-4 py-5">
-              <CardHeader className="px-5">
+              <CardHeader className="px-4 sm:px-5">
                 <CardTitle>{t.analytics.auditTitle}</CardTitle>
                 <CardDescription>{t.analytics.auditDescription}</CardDescription>
               </CardHeader>
-              <CardContent className="px-5">
+              <CardContent className="px-4 sm:px-5">
                 {(snapshot?.audit.length ?? 0) === 0 ? (
                   <p className="text-sm text-muted-foreground">{t.analytics.noAudit}</p>
                 ) : (
@@ -229,12 +229,12 @@ export default function AnalyticsPage() {
 
           <TabsContent value="runtime" className="pt-3">
             <Card className="gap-4 py-5">
-              <CardHeader className="px-5">
+              <CardHeader className="px-4 sm:px-5">
                 <CardTitle>{t.analytics.runtimeTitle}</CardTitle>
                 <CardDescription>{t.analytics.runtimeDescription}</CardDescription>
               </CardHeader>
-              <CardContent className="px-5">
-                <pre className="max-h-[32rem] overflow-auto rounded-lg bg-muted p-4 text-xs leading-relaxed" tabIndex={0}>
+              <CardContent className="px-4 sm:px-5">
+                <pre className="max-h-[32rem] overflow-auto overscroll-contain rounded-lg bg-muted p-4 text-xs leading-relaxed" tabIndex={0}>
                   {snapshot?.metrics.trim() || '—'}
                 </pre>
               </CardContent>
@@ -285,40 +285,74 @@ function UsageTable({
   const day = useMemo(() => new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeZone: 'UTC' }), [locale]);
 
   if (rows.length === 0) {
-    return <p className="px-5 text-sm text-muted-foreground">{t.analytics.noUsage}</p>;
+    return <p className="px-4 text-sm text-muted-foreground sm:px-5">{t.analytics.noUsage}</p>;
   }
 
+  const cells = (row: UsageSummaryRow) => [
+    { label: t.analytics.requests, value: number.format(row.requests) },
+    { label: t.analytics.tokens, value: number.format(row.total_tokens) },
+    { label: t.analytics.inputTokens, value: number.format(row.prompt_tokens) },
+    { label: t.analytics.outputTokens, value: number.format(row.completion_tokens) },
+  ];
+
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full min-w-[42rem] border-collapse text-sm">
-        <thead>
-          <tr className="border-y border-border bg-muted/40 text-left text-xs text-muted-foreground">
-            <th scope="col" className="px-5 py-2.5 font-medium">{t.analytics.day}</th>
-            <th scope="col" className="px-3 py-2.5 font-medium">{t.analytics.providerModel}</th>
-            <th scope="col" className="px-3 py-2.5 text-right font-medium">{t.analytics.requests}</th>
-            <th scope="col" className="px-3 py-2.5 text-right font-medium">{t.analytics.inputTokens}</th>
-            <th scope="col" className="px-3 py-2.5 text-right font-medium">{t.analytics.outputTokens}</th>
-            <th scope="col" className="px-3 py-2.5 text-right font-medium">{t.analytics.tokens}</th>
-            <th scope="col" className="px-5 py-2.5 text-right font-medium">{t.analytics.cost}</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row) => (
-            <tr key={`${row.day}:${row.provider}:${row.model}`} className="border-b border-border last:border-0">
-              <td className="whitespace-nowrap px-5 py-3">{day.format(new Date(`${row.day}T00:00:00Z`))}</td>
-              <td className="px-3 py-3">
-                <span className="font-medium">{row.provider}</span>
-                <span className="block max-w-72 truncate text-xs text-muted-foreground" title={row.model}>{row.model}</span>
-              </td>
-              <td className="px-3 py-3 text-right tabular-nums">{number.format(row.requests)}</td>
-              <td className="px-3 py-3 text-right tabular-nums">{number.format(row.prompt_tokens)}</td>
-              <td className="px-3 py-3 text-right tabular-nums">{number.format(row.completion_tokens)}</td>
-              <td className="px-3 py-3 text-right font-medium tabular-nums">{number.format(row.total_tokens)}</td>
-              <td className="px-5 py-3 text-right tabular-nums">{currency.format(row.estimated_cost_usd)}</td>
+    <>
+      {/* Reading one day of a seven-column table on a phone means scrolling
+          sideways and losing the row header. Below `md` the same row becomes a
+          card, so every figure stays next to the label that names it. */}
+      <ul className="flex flex-col gap-3 px-4 sm:px-5 md:hidden">
+        {rows.map((row) => (
+          <li key={`${row.day}:${row.provider}:${row.model}`} className="rounded-lg border border-border p-3">
+            <div className="flex items-baseline justify-between gap-3">
+              <span className="text-sm font-medium">{day.format(new Date(`${row.day}T00:00:00Z`))}</span>
+              <span className="shrink-0 text-sm font-semibold tabular-nums">{currency.format(row.estimated_cost_usd)}</span>
+            </div>
+            <p className="mt-0.5 truncate text-xs text-muted-foreground" title={`${row.provider} · ${row.model}`}>
+              {row.provider} · {row.model}
+            </p>
+            <dl className="mt-2.5 grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
+              {cells(row).map((cell) => (
+                <div key={cell.label} className="flex items-baseline justify-between gap-2">
+                  <dt className="truncate text-muted-foreground">{cell.label}</dt>
+                  <dd className="shrink-0 tabular-nums">{cell.value}</dd>
+                </div>
+              ))}
+            </dl>
+          </li>
+        ))}
+      </ul>
+
+      <div className="hidden overflow-x-auto md:block">
+        <table className="w-full min-w-[42rem] border-collapse text-sm">
+          <thead>
+            <tr className="border-y border-border bg-muted/40 text-left text-xs text-muted-foreground">
+              <th scope="col" className="px-5 py-2.5 font-medium">{t.analytics.day}</th>
+              <th scope="col" className="px-3 py-2.5 font-medium">{t.analytics.providerModel}</th>
+              <th scope="col" className="px-3 py-2.5 text-right font-medium">{t.analytics.requests}</th>
+              <th scope="col" className="px-3 py-2.5 text-right font-medium">{t.analytics.inputTokens}</th>
+              <th scope="col" className="px-3 py-2.5 text-right font-medium">{t.analytics.outputTokens}</th>
+              <th scope="col" className="px-3 py-2.5 text-right font-medium">{t.analytics.tokens}</th>
+              <th scope="col" className="px-5 py-2.5 text-right font-medium">{t.analytics.cost}</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={`${row.day}:${row.provider}:${row.model}`} className="border-b border-border last:border-0">
+                <td className="whitespace-nowrap px-5 py-3">{day.format(new Date(`${row.day}T00:00:00Z`))}</td>
+                <td className="px-3 py-3">
+                  <span className="font-medium">{row.provider}</span>
+                  <span className="block max-w-72 truncate text-xs text-muted-foreground" title={row.model}>{row.model}</span>
+                </td>
+                <td className="px-3 py-3 text-right tabular-nums">{number.format(row.requests)}</td>
+                <td className="px-3 py-3 text-right tabular-nums">{number.format(row.prompt_tokens)}</td>
+                <td className="px-3 py-3 text-right tabular-nums">{number.format(row.completion_tokens)}</td>
+                <td className="px-3 py-3 text-right font-medium tabular-nums">{number.format(row.total_tokens)}</td>
+                <td className="px-5 py-3 text-right tabular-nums">{currency.format(row.estimated_cost_usd)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </>
   );
 }

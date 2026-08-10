@@ -20,7 +20,7 @@
     "baileys": "7.0.0-rc13",
     "bcryptjs": "^2.4.3",
     "cookie-parser": "^1.4.7",
-    "dotenv": "^16.4.5",
+    "dotenv": "^17.4.2",
     "express": "^4.21.2",
     "jose": "^5.9.6",
     "openai": "^4.77.0",

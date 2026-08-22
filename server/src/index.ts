@@ -14,7 +14,13 @@ import {
   setReceiptMediaHash,
 } from './db/repo';
 import { reconcileReceiptAfterAmbiguousOrderUpdate } from './skills/payments';
+import { ReminderDispatcher } from './reminders/dispatcher';
 import { closeMcpPool } from './mcp/manager';
+
+/** How often to look for due reminders. A minute is far finer than the
+ * accuracy anyone expects from "the day before at 6pm", and keeps the query
+ * cheap enough to be uninteresting. */
+const REMINDER_TICK_MS = 60_000;
 
 async function reconcileReceiptState(): Promise<void> {
   const stale = await listStaleReceiptReviews();
@@ -68,6 +74,16 @@ async function main(): Promise<void> {
 
   const gateway = new WhatsAppGateway();
   const router = new MessageRouter(gateway);
+
+  // Appointment reminders. Same shape as the receipt reconciliation timer
+  // above — a guarded interval, unref'd so it never holds the process open.
+  // No queue and no Redis: the work is a bounded batch of due rows, and the
+  // durable outbox already owns delivery and retries.
+  const reminders = new ReminderDispatcher(gateway);
+  const reminderTimer = setInterval(() => {
+    void reminders.tick().catch((err) => logger.warn({ err }, 'reminder tick failed'));
+  }, REMINDER_TICK_MS);
+  reminderTimer.unref();
   gateway.onMessage = (sock, msg) => router.handle(sock, msg);
   // On (re)connect, answer any customer whose last message went unanswered.
   gateway.onConnected = () => void router.recoverUnanswered();
@@ -99,6 +115,8 @@ async function main(): Promise<void> {
     hardDeadline.unref();
     try {
       clearInterval(reconciliationTimer);
+      clearInterval(reminderTimer);
+      reminders.stop();
       stopReceiptCleanup();
       // Stop accepting work immediately, then drain routers/transports while
       // existing HTTP requests get a short grace period.

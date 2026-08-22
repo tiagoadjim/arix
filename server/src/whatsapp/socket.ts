@@ -6,19 +6,15 @@ import makeWASocket, {
   type AnyMessageContent,
 } from 'baileys';
 import qrcodeTerminal from 'qrcode-terminal';
-import { createHash } from 'node:crypto';
 import { config } from '../config';
 import { logger, logIdentifier } from '../logger';
 import { usePostgresAuthState } from './auth-postgres';
 
 export type IncomingHandler = (sock: WASocket, msg: WAMessage) => Promise<void>;
 
-/** Deterministic WhatsApp id derived from our durable idempotency key. Baileys
- * accepts a custom messageId, so an ambiguous retry reuses the same remote key
- * instead of creating a duplicate bubble. */
-export function stableWhatsAppMessageId(clientId: string): string {
-  return createHash('sha256').update(`arix-wa:${clientId}`).digest('hex').slice(0, 32).toUpperCase();
-}
+// Re-exported so existing importers keep working; the implementation moved to
+// ./message-id so it can be used without loading Baileys.
+export { stableWhatsAppMessageId } from './message-id';
 
 interface DisconnectErr {
   output?: { statusCode?: number };

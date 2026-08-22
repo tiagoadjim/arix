@@ -309,6 +309,42 @@ export async function appointmentSettings(): Promise<AppointmentSettings> {
   };
 }
 
+export type ReminderKind = 'booked' | 'day_before' | 'hours_before';
+
+export const REMINDER_KINDS: readonly ReminderKind[] = ['booked', 'day_before', 'hours_before'];
+
+export interface ReminderSettings {
+  enabled: boolean;
+  hoursBefore: number;
+  dayBeforeHour: number;
+  kinds: ReminderKind[];
+  templates: Record<ReminderKind, string>;
+}
+
+export async function reminderSettings(): Promise<ReminderSettings> {
+  const meta = await resolve();
+  const rawKinds = valueOf<unknown>(meta, 'reminders.kinds');
+  const list = Array.isArray(rawKinds)
+    ? rawKinds
+    : typeof rawKinds === 'string'
+      ? rawKinds.split(',').map((k) => k.trim())
+      : [];
+  const kinds = list.filter((k): k is ReminderKind =>
+    (REMINDER_KINDS as readonly string[]).includes(k as string),
+  );
+  return {
+    enabled: valueOf<boolean>(meta, 'reminders.enabled'),
+    hoursBefore: valueOf<number>(meta, 'reminders.hours_before'),
+    dayBeforeHour: valueOf<number>(meta, 'reminders.day_before_hour'),
+    kinds: [...new Set(kinds)],
+    templates: {
+      booked: valueOf<string>(meta, 'reminders.template_booked'),
+      day_before: valueOf<string>(meta, 'reminders.template_day_before'),
+      hours_before: valueOf<string>(meta, 'reminders.template_hours_before'),
+    },
+  };
+}
+
 /** The weekly delivery schedule (see agent/hours.ts's Schedule shape). */
 export async function hoursConfig(): Promise<Schedule> {
   const meta = await resolve();

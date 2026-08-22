@@ -5,11 +5,19 @@ import {
   getBusyAppointments,
   getUpcomingAppointments,
   setAppointmentStatus,
+  scheduleReminders,
+  cancelPendingReminders,
   SlotTakenError,
   type Appointment,
 } from '../db/repo';
-import { appointmentSettings, businessProfile, hoursConfig } from '../config/runtime';
+import {
+  appointmentSettings,
+  businessProfile,
+  hoursConfig,
+  reminderSettings,
+} from '../config/runtime';
 import { availableSlots, type Slot } from '../agent/slots';
+import { planReminders } from '../reminders/schedule';
 import { logger } from '../logger';
 import type { ToolSpec } from '../agent/tool-spec';
 import type { ToolContext } from '../types';
@@ -219,6 +227,28 @@ export const appointmentTools: ToolSpec[] = [
           endsAt: windowEnd,
           notes: String(args.notes ?? '').trim() || null,
         });
+        // Reminders are planned right after the booking that justifies them.
+        // A failure here must not un-book a confirmed appointment, so it is
+        // logged and swallowed: the customer has their slot either way.
+        try {
+          const reminders = await reminderSettings();
+          const planned = planReminders({
+            startsAt,
+            now: new Date(),
+            settings: reminders,
+            schedule,
+            timezone,
+          });
+          if (planned.length > 0) {
+            await scheduleReminders(
+              appointment.id,
+              planned.map((p) => ({ kind: p.kind, sendAt: p.sendAt })),
+            );
+          }
+        } catch (err) {
+          logger.error({ err, appointmentId: appointment.id }, 'failed to plan reminders');
+        }
+
         logger.info(
           { conversationId: ctx.conversationId, appointmentId: appointment.id },
           'appointment booked',
@@ -307,6 +337,10 @@ export const appointmentTools: ToolSpec[] = [
 
       const appointment = await setAppointmentStatus(id.value, ctx.conversationId, 'cancelled');
       if (!appointment) return { ok: false, reason: 'appointment_not_found' };
+      // A reminder for an appointment that no longer exists is pure spam.
+      await cancelPendingReminders(appointment.id, 'appointment_cancelled').catch((err) => {
+        logger.error({ err, appointmentId: appointment.id }, 'failed to cancel reminders');
+      });
       logger.info(
         { conversationId: ctx.conversationId, appointmentId: appointment.id },
         'appointment cancelled',

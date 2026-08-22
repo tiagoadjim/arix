@@ -274,6 +274,26 @@ endorses. Using it carries a real risk of the connected number being banned.
 Don't use Arix for bulk/marketing messaging or anything that looks like spam;
 it's built for answering inbound customer conversations, not outbound blasts.
 
+**Appointment reminders are the one automatic outbound feature**, and they are
+**off by default**. Turning them on means this deployment starts sending
+messages nobody clicked send on, which is the clearest ban vector Arix has.
+They are built to stay on the transactional side of that line, and the limits
+are enforced in code rather than left to your judgement:
+
+- only to a conversation that already exists — an appointment is always booked
+  through the chat it will be sent to, so Arix never messages a number that
+  didn't write first;
+- never outside your configured opening hours (a reminder due at 3am is
+  deferred to the next opening, or dropped if that would be too late);
+- at most one message per reminder, guaranteed by the durable outbox even
+  across a crash or a restart;
+- spread out rather than sent in a burst;
+- stopped for that customer the moment they ask, with no argument;
+- and stopped everywhere the moment you switch `reminders.enabled` off.
+
+Even so: it is outbound automation on an unofficial client. Turn it on
+deliberately, on a number you can afford to lose.
+
 ## Roadmap
 
 Planned, no committed dates:

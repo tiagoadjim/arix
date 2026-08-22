@@ -262,6 +262,70 @@ export const SETTINGS_SCHEMA: readonly SettingDefinition[] = [
     label: 'Bookable services (JSON array of names; empty = free text)',
   },
 
+  // ---- Appointment reminders --------------------------------------------------
+  {
+    key: 'reminders.enabled',
+    group: 'reminders',
+    type: 'boolean',
+    // OFF by default, deliberately. Automatic outbound on an unofficial
+    // WhatsApp client is the clearest ban vector Arix has; turning it on must
+    // be a decision someone made, never something that happened to them.
+    default: false,
+    seedEnv: 'REMINDERS_ENABLED',
+    label: 'Send automatic appointment reminders (outbound — read the README first)',
+  },
+  {
+    key: 'reminders.hours_before',
+    group: 'reminders',
+    type: 'number',
+    min: 1,
+    max: 168,
+    default: 3,
+    seedEnv: 'REMINDERS_HOURS_BEFORE',
+    label: 'Hours before the appointment for the final nudge',
+  },
+  {
+    key: 'reminders.day_before_hour',
+    group: 'reminders',
+    type: 'number',
+    min: 0,
+    max: 23,
+    default: 18,
+    seedEnv: 'REMINDERS_DAY_BEFORE_HOUR',
+    label: 'Local hour to send the day-before reminder',
+  },
+  {
+    key: 'reminders.kinds',
+    group: 'reminders',
+    type: 'json',
+    // The day-before one is what actually moves the no-show rate; the booking
+    // confirmation and the final nudge are opt-in extras.
+    default: ['day_before'],
+    seedEnv: 'REMINDERS_KINDS',
+    label: 'Which reminders to schedule (booked, day_before, hours_before)',
+  },
+  {
+    key: 'reminders.template_booked',
+    group: 'reminders',
+    type: 'string',
+    default: '',
+    label: 'Booking confirmation template ({service} {date} {time} {business})',
+  },
+  {
+    key: 'reminders.template_day_before',
+    group: 'reminders',
+    type: 'string',
+    default: '',
+    label: 'Day-before reminder template ({service} {date} {time} {business})',
+  },
+  {
+    key: 'reminders.template_hours_before',
+    group: 'reminders',
+    type: 'string',
+    default: '',
+    label: 'Final nudge template ({service} {date} {time} {business})',
+  },
+
   // ---- Business profile ---------------------------------------------------------
   {
     key: 'business.name',

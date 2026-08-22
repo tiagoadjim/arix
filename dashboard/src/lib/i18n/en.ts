@@ -308,6 +308,12 @@ export const en: Dictionary = {
     business: {
       businessNameLabel: 'Business name',
       agentNameLabel: 'Agent name',
+      verticalLabel: 'Business type',
+      verticalHint:
+        'Sets what the agent knows how to talk about and which tools it offers. Changing it erases nothing you have already configured.',
+      verticalEcommerce: 'I sell products online',
+      verticalServices: 'I offer services',
+      verticalAppointments: 'I work by appointment',
       agentLanguageLabel: 'Agent language',
       uiLanguageLabel: 'Dashboard language',
       uiLanguageHint: 'Changes this dashboard\'s language. Saving reloads the page.',
@@ -350,6 +356,10 @@ export const en: Dictionary = {
         handoff: {
           label: 'Human handoff',
           description: 'Pause the bot and escalate the conversation to a human teammate.',
+        },
+        knowledge: {
+          label: 'Knowledge base',
+          description: "Answer questions from the business information you've entered and reviewed.",
         },
       },
     },

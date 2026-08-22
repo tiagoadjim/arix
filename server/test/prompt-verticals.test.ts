@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { buildSystemPrompt, type ResolvedPromptConfig } from '../src/agent/prompt';
 import { VERTICALS, hasCatalog, normalizeVertical } from '../src/verticals';
-import { defaultEnabledSkills } from '../src/skills/ids';
+import { defaultEnabledSkills, normalizeEnabledSkills } from '../src/skills/ids';
+import { SETTINGS_SCHEMA } from '../src/config/settings-schema';
 import type { ToolContext } from '../src/types';
 
 const SCHEDULE = [
@@ -146,5 +147,36 @@ describe('prompt packs', () => {
       const rules = prompt.slice(prompt.indexOf('# Reglas'));
       expect(rules.split('\n')[1]).toBe('- Solo mayores de 18.');
     }
+  });
+});
+
+describe('skills.enabled resolution', () => {
+  // Regression: the schema used to default `skills.enabled` to the four
+  // ecommerce skills. That concrete list resolved before the vertical could be
+  // consulted, so switching to `services` left the agent still advertising
+  // search_catalog and confirm_payment. Only an end-to-end run caught it — the
+  // unit tests exercised normalizeEnabledSkills directly and never saw the
+  // schema default get in the way.
+  it('leaves skills.enabled unset so the vertical decides', () => {
+    const entry = SETTINGS_SCHEMA.find((definition) => definition.key === 'skills.enabled');
+    expect(entry?.default).toBeNull();
+  });
+
+  it('treats an explicit empty list as a choice, not an absence', () => {
+    // `[]` means "disable everything" and must not fall back to the vertical.
+    expect(normalizeEnabledSkills([], defaultEnabledSkills('services'))).toEqual([]);
+  });
+
+  it('falls back to the vertical when the value is absent', () => {
+    expect(normalizeEnabledSkills(null, defaultEnabledSkills('services'))).toEqual([
+      'knowledge',
+      'handoff',
+    ]);
+    expect(normalizeEnabledSkills(undefined, defaultEnabledSkills('ecommerce'))).toEqual([
+      'catalog',
+      'orders',
+      'payments',
+      'handoff',
+    ]);
   });
 });

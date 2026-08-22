@@ -9,18 +9,28 @@ import { Badge } from '@/components/ui/badge';
 import { compactUpdates, findDto, isReadOnly, plainUpdate } from './settings-form-utils';
 
 /** Built-in skill ids — must stay in sync with server/src/skills/registry.ts. */
-export const SKILL_IDS = ['catalog', 'orders', 'payments', 'handoff'] as const;
+export const SKILL_IDS = ['catalog', 'orders', 'payments', 'handoff', 'knowledge'] as const;
 export type SkillId = (typeof SKILL_IDS)[number];
 
 export interface SkillsFormValues {
   enabled: SkillId[];
 }
 
-export function initSkillsValues(dtos: SettingDto[] | undefined): SkillsFormValues {
+export function initSkillsValues(
+  dtos: SettingDto[] | undefined,
+  catalog?: SkillCatalogEntry[],
+): SkillsFormValues {
   const raw = findDto('skills.enabled', dtos)?.value;
   if (Array.isArray(raw)) {
     const ids = raw.filter((v): v is SkillId => typeof v === 'string' && (SKILL_IDS as readonly string[]).includes(v));
     return { enabled: ids };
+  }
+  // `skills.enabled` is null until an operator saves a choice, and what is on
+  // by default then depends on the business vertical. GET /api/skills is the
+  // server's own resolution of that, so prefer it over guessing here — ticking
+  // every box would show a service business a catalog skill it is not running.
+  if (catalog) {
+    return { enabled: SKILL_IDS.filter((id) => catalog.some((e) => e.id === id && e.enabled)) };
   }
   return { enabled: [...SKILL_IDS] };
 }
@@ -38,11 +48,15 @@ interface SkillsFieldsProps {
   disabled?: boolean;
 }
 
-const FALLBACK_META: Record<SkillId, { labelKey: 'catalog' | 'orders' | 'payments' | 'handoff' }> = {
+const FALLBACK_META: Record<
+  SkillId,
+  { labelKey: 'catalog' | 'orders' | 'payments' | 'handoff' | 'knowledge' }
+> = {
   catalog: { labelKey: 'catalog' },
   orders: { labelKey: 'orders' },
   payments: { labelKey: 'payments' },
   handoff: { labelKey: 'handoff' },
+  knowledge: { labelKey: 'knowledge' },
 };
 
 /** Toggle built-in agent skills — shared by settings tab and setup wizard. */

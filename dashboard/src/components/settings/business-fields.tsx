@@ -13,8 +13,17 @@ import { Separator } from '@/components/ui/separator';
 import { HoursEditor } from './hours-editor';
 import { booleanValue, compactUpdates, findDto, isReadOnly, plainUpdate, stringValue } from './settings-form-utils';
 
+export type Vertical = 'ecommerce' | 'services' | 'appointments';
+
+const VERTICALS: readonly Vertical[] = ['ecommerce', 'services', 'appointments'];
+
+function toVertical(raw: string): Vertical {
+  return (VERTICALS as readonly string[]).includes(raw) ? (raw as Vertical) : 'ecommerce';
+}
+
 export interface BusinessFormValues {
   businessName: string;
+  vertical: Vertical;
   timezone: string;
   hours: Schedule;
   agentName: string;
@@ -37,6 +46,7 @@ export function initBusinessValues(dtos: {
   const hoursRaw = findDto('business.hours', dtos.business)?.value;
   return {
     businessName: stringValue('business.name', dtos.business, 'My Store'),
+    vertical: toVertical(stringValue('business.vertical', dtos.business, 'ecommerce')),
     timezone: stringValue('business.timezone', dtos.business, 'America/Argentina/Buenos_Aires'),
     hours: Array.isArray(hoursRaw) && hoursRaw.length === 7 ? (hoursRaw as Schedule) : emptySchedule(),
     agentName: stringValue('agent.name', dtos.agent, 'Arix'),
@@ -62,6 +72,7 @@ export function buildBusinessUpdates(
 ): SettingsUpdate[] {
   return compactUpdates([
     plainUpdate('business.name', values.businessName, dtos.business),
+    plainUpdate('business.vertical', values.vertical, dtos.business),
     plainUpdate('business.timezone', values.timezone, dtos.business),
     plainUpdate('business.hours', values.hours, dtos.business),
     plainUpdate('agent.name', values.agentName, dtos.agent),
@@ -151,6 +162,25 @@ export function BusinessFields({
           <Label htmlFor="agent-name">{t.settings.business.agentNameLabel}</Label>
           <Input id="agent-name" value={values.agentName} onChange={(e) => set('agentName', e.target.value)} disabled={disabled || isReadOnly('agent.name', dtos.agent)} />
         </div>
+      </div>
+
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor="business-vertical">{t.settings.business.verticalLabel}</Label>
+        <Select
+          value={values.vertical}
+          onValueChange={(v) => set('vertical', toVertical(v))}
+          disabled={disabled || isReadOnly('business.vertical', dtos.business)}
+        >
+          <SelectTrigger id="business-vertical" className="w-full">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="ecommerce">{t.settings.business.verticalEcommerce}</SelectItem>
+            <SelectItem value="services">{t.settings.business.verticalServices}</SelectItem>
+            <SelectItem value="appointments">{t.settings.business.verticalAppointments}</SelectItem>
+          </SelectContent>
+        </Select>
+        <p className="text-xs text-muted-foreground">{t.settings.business.verticalHint}</p>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2">

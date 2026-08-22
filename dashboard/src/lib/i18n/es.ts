@@ -308,6 +308,12 @@ export const es: Dictionary = {
     business: {
       businessNameLabel: 'Nombre del negocio',
       agentNameLabel: 'Nombre del agente',
+      verticalLabel: 'Tipo de negocio',
+      verticalHint:
+        'Define de qué sabe hablar el agente y qué herramientas ofrece. Cambiarlo no borra nada de lo que ya configuraste.',
+      verticalEcommerce: 'Vendo productos online',
+      verticalServices: 'Ofrezco servicios',
+      verticalAppointments: 'Trabajo con turnos',
       agentLanguageLabel: 'Idioma del agente',
       uiLanguageLabel: 'Idioma del panel',
       uiLanguageHint: 'Cambia el idioma de este panel. Guardar recarga la página.',
@@ -350,6 +356,10 @@ export const es: Dictionary = {
         handoff: {
           label: 'Derivación a humano',
           description: 'Pausar el bot y pasar la conversación a un integrante del equipo.',
+        },
+        knowledge: {
+          label: 'Base de conocimiento',
+          description: 'Responder consultas con la información del negocio que cargaste y revisaste.',
         },
       },
     },

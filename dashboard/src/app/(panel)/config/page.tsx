@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ArrowLeftIcon } from 'lucide-react';
 import { toast } from 'sonner';
-import { api, apiErrorMessage, type SettingDto } from '@/lib/api';
+import { api, apiErrorMessage, type SettingDto, type SkillCatalogEntry } from '@/lib/api';
 import { setLocaleCookie, type Locale } from '@/lib/i18n';
 import { useT } from '@/lib/i18n/provider';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -242,15 +242,34 @@ function StoreTab({
 
 function SkillsTab({ dtos, onSaved }: { dtos?: SettingDto[]; onSaved: () => void | Promise<void> }) {
   const { t } = useT();
+  // The server's own resolution of which skills are on. Until an operator
+  // saves a choice, `skills.enabled` is null and the answer depends on the
+  // business vertical — this is what tells us, rather than guessing.
+  const [catalog, setCatalog] = useState<SkillCatalogEntry[] | undefined>(undefined);
   const [initial, setInitial] = useState<SkillsFormValues>(() => initSkillsValues(dtos));
   const [values, setValues] = useState<SkillsFormValues>(initial);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    const next = initSkillsValues(dtos);
+    let alive = true;
+    void (async () => {
+      try {
+        const { skills } = await api.skills();
+        if (alive) setCatalog(skills);
+      } catch {
+        // Falls back to the DTO value; the tab stays usable.
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    const next = initSkillsValues(dtos, catalog);
     setInitial(next);
     setValues(next);
-  }, [dtos]);
+  }, [dtos, catalog]);
 
   const dirty = isDirty(values, initial);
 
@@ -274,7 +293,7 @@ function SkillsTab({ dtos, onSaved }: { dtos?: SettingDto[]; onSaved: () => void
 
   return (
     <div className="flex flex-col gap-4">
-      <SkillsFields values={values} onChange={setValues} dtos={dtos} disabled={saving} />
+      <SkillsFields values={values} onChange={setValues} dtos={dtos} catalog={catalog} disabled={saving} />
       <Button onClick={() => void handleSave()} disabled={saving || !dirty} className="w-fit">
         {saving ? t.common.saving : t.settings.saveButton}
       </Button>

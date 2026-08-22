@@ -264,6 +264,11 @@ export interface Dictionary {
     business: {
       businessNameLabel: string;
       agentNameLabel: string;
+      verticalLabel: string;
+      verticalHint: string;
+      verticalEcommerce: string;
+      verticalServices: string;
+      verticalAppointments: string;
       agentLanguageLabel: string;
       uiLanguageLabel: string;
       uiLanguageHint: string;
@@ -295,6 +300,7 @@ export interface Dictionary {
         orders: { label: string; description: string };
         payments: { label: string; description: string };
         handoff: { label: string; description: string };
+        knowledge: { label: string; description: string };
       };
     };
     mcp: {

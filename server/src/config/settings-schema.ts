@@ -321,9 +321,13 @@ export const SETTINGS_SCHEMA: readonly SettingDefinition[] = [
     key: 'skills.enabled',
     group: 'skills',
     type: 'json',
-    // Default is every built-in skill — see skills/registry.ts. Stored as a
-    // JSON string array of skill ids (e.g. ["catalog","orders","payments","handoff"]).
-    default: ['catalog', 'orders', 'payments', 'handoff'],
+    // `null` means "never chosen — follow business.vertical" (resolved by
+    // runtime.ts's enabledSkills()). A concrete list here would win over the
+    // vertical, which is what it used to do: switching to `services` left the
+    // agent advertising search_catalog and confirm_payment. An explicit `[]`
+    // still means "disable everything" — that is a choice, not an absence.
+    // Stored as a JSON string array of skill ids once an operator saves one.
+    default: null,
     seedEnv: 'SKILLS_ENABLED',
     label: 'Enabled built-in agent skills',
   },

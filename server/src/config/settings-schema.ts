@@ -1,4 +1,5 @@
 import { AR_TZ, DEFAULT_DELIVERY_SCHEDULE, type Schedule } from '../agent/hours';
+import { DEFAULT_VERTICAL, VERTICALS } from '../verticals';
 
 /**
  * Declarative registry of every runtime-configurable setting. This is the
@@ -235,6 +236,15 @@ export const SETTINGS_SCHEMA: readonly SettingDefinition[] = [
     default: AR_TZ,
     seedEnv: 'BUSINESS_TIMEZONE',
     label: 'Business IANA timezone',
+  },
+  {
+    key: 'business.vertical',
+    group: 'business',
+    type: 'enum',
+    enumValues: VERTICALS,
+    default: DEFAULT_VERTICAL,
+    seedEnv: 'BUSINESS_VERTICAL',
+    label: 'Business type',
   },
   {
     key: 'business.hours',

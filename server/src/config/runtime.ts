@@ -14,7 +14,8 @@ import {
   isValidTimezone,
   type Schedule,
 } from '../agent/hours';
-import { normalizeEnabledSkills, DEFAULT_ENABLED_SKILLS } from '../skills/ids';
+import { normalizeEnabledSkills, defaultEnabledSkills } from '../skills/ids';
+import { normalizeVertical, type Vertical } from '../verticals';
 import { normalizeMcpServers, type McpServerConfig } from '../mcp/types';
 
 /**
@@ -261,6 +262,7 @@ export interface BusinessProfile {
   language: 'es' | 'en';
   discloseBot: boolean;
   timezone: string;
+  vertical: Vertical;
 }
 
 export async function businessProfile(): Promise<BusinessProfile> {
@@ -272,7 +274,15 @@ export async function businessProfile(): Promise<BusinessProfile> {
     language: valueOf<'es' | 'en'>(meta, 'agent.language'),
     discloseBot: valueOf<boolean>(meta, 'agent.disclose_bot'),
     timezone: isValidTimezone(timezone) ? timezone : AR_TZ,
+    vertical: normalizeVertical(valueOf<string>(meta, 'business.vertical')),
   };
+}
+
+/** The kind of business this deployment serves. Selects the prompt pack, the
+ * default skill set and whether the catalog grounding lock applies. */
+export async function vertical(): Promise<Vertical> {
+  const meta = await resolve();
+  return normalizeVertical(valueOf<string>(meta, 'business.vertical'));
 }
 
 /** The weekly delivery schedule (see agent/hours.ts's Schedule shape). */
@@ -324,14 +334,17 @@ export async function setupStep(): Promise<number> {
 export async function enabledSkills(): Promise<string[]> {
   const meta = await resolve();
   const raw = valueOf<unknown>(meta, 'skills.enabled');
+  const fallback = defaultEnabledSkills(
+    normalizeVertical(valueOf<string>(meta, 'business.vertical')),
+  );
   // Env seed arrives as a comma-separated string when set via SKILLS_ENABLED
   // (parseRawValue for json tries JSON.parse first; a bare CSV falls through
   // to the default). Accept both a JSON array and a CSV string here.
   if (typeof raw === 'string') {
     const parts = raw.split(',').map((s) => s.trim()).filter(Boolean);
-    return normalizeEnabledSkills(parts.length > 0 ? parts : DEFAULT_ENABLED_SKILLS);
+    return normalizeEnabledSkills(parts.length > 0 ? parts : fallback, fallback);
   }
-  return normalizeEnabledSkills(raw);
+  return normalizeEnabledSkills(raw, fallback);
 }
 
 /** Configured MCP servers (enabled and disabled). */

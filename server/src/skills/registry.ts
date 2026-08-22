@@ -5,7 +5,7 @@ import { handoffTools } from './handoff';
 import type { ToolSpec } from '../agent/tool-spec';
 export {
   BUILTIN_SKILL_IDS,
-  DEFAULT_ENABLED_SKILLS,
+  defaultEnabledSkills,
   isKnownSkillId,
   normalizeEnabledSkills,
 } from './ids';

@@ -523,6 +523,8 @@ export interface Dictionary {
       doneEditing: string;
       warningInstructions: string;
       warningUngrounded: string;
+      knowledgeTitle: string;
+      knowledgeSubtitle: string;
       selectedCount: string;
       save: string;
       pagesReadTitle: string;

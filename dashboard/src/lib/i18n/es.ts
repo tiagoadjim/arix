@@ -574,6 +574,9 @@ export const es: Dictionary = {
       doneEditing: 'Listo',
       warningInstructions: 'Este texto parece una instrucción y no información de tu tienda. Leelo con atención antes de quedártelo.',
       warningUngrounded: 'Contiene un link o un número que no encontramos en tu sitio. Verificalo contra tus propios datos antes de quedártelo.',
+      knowledgeTitle: 'Preguntas frecuentes que encontramos',
+      knowledgeSubtitle:
+        'Cada una que aceptes es algo que el agente va a poder responder como un hecho. Revisalas contra tu sitio antes de quedártelas.',
       selectedCount: 'Te quedás con {n} de {total}',
       save: 'Guardar lo que elegí',
       pagesReadTitle: 'Páginas que leímos',

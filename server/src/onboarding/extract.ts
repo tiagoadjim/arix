@@ -28,6 +28,13 @@ import type { CrawledPage } from './crawler';
 const MAX_BLOCK_CHARS = 4_000;
 const MAX_NAME_CHARS = 120;
 const MAX_SOURCES = 6;
+/** Knowledge caps, matching what POST /api/knowledge accepts so a proposal can
+ * never be larger than the thing that will store it. */
+const MAX_FAQ_QUESTION_CHARS = 500;
+const MAX_FAQ_ANSWER_CHARS = 5_000;
+/** A scan proposes at most this many entries: the reviewer has to read every
+ * one of them, and a list nobody finishes reading is a list nobody reviews. */
+const MAX_FAQS = 25;
 
 const windowSchema = z
   .tuple([z.number().int().min(0).max(2_880), z.number().int().min(0).max(2_880)])
@@ -44,6 +51,19 @@ const proposalSchema = z.object({
   agentTone: z.string().max(2_000).nullable().optional(),
   /** Sunday-first, seven entries, minutes from local midnight. */
   hours: z.array(windowSchema).length(7).nullable().optional(),
+  /** Question/answer pairs for the knowledge base — the only part of the scan
+   * that survives for a business with no catalog behind it. */
+  faqs: z
+    .array(
+      z.object({
+        question: z.string().max(2_000),
+        answer: z.string().max(20_000),
+        sourceUrl: z.string().max(2_048).nullable().optional(),
+      }),
+    )
+    .max(60)
+    .nullable()
+    .optional(),
   sources: z.record(z.string(), z.array(z.string().max(2_048)).max(20)).optional(),
   confidence: z.record(z.string(), z.number().min(0).max(1)).optional(),
 });
@@ -78,8 +98,21 @@ export interface ProposedField {
 
 export type ProposalWarning = 'looks_like_instructions' | 'ungrounded_details';
 
+/** A knowledge-base entry the scan suggests. Like ProposedField, it is a
+ * proposal only: nothing is written until an administrator accepts it. */
+export interface ProposedKnowledge {
+  question: string;
+  answer: string;
+  /** The page it was drawn from, when the model cited one we actually crawled. */
+  sourceUrl: string | null;
+  /** Same meaning as on ProposedField — a reason to look closer, never a
+   * reason to silently drop the row. */
+  warnings: ProposalWarning[];
+}
+
 export interface ExtractionResult {
   fields: ProposedField[];
+  knowledge: ProposedKnowledge[];
   /** Suggested persona tone, offered as a note rather than a settings write. */
   agentTone: string | null;
   pagesRead: number;
@@ -102,6 +135,7 @@ Return ONLY a JSON object, no prose and no code fences, with these keys:
 - generalInfo: anything else a customer commonly asks — returns and exchanges, warranty, opening hours in words, contact channels, physical locations. Plain text.
 - complianceRules: only genuine legal restrictions the store states (age limits, prescription requirements, regional restrictions), else null
 - agentTone: one sentence describing how this store writes to its customers, else null
+- faqs: up to 25 question/answer pairs a customer commonly asks, drawn ONLY from what the site states — shipping and returns policies, requirements, how a service works, opening hours, location, contact. Each item is {"question": "...", "answer": "...", "sourceUrl": "the page it came from"}. Phrase the question the way a customer would ask it. Omit anything the site does not answer.
 - hours: 7 entries, index 0 = Sunday … 6 = Saturday. Each is null (closed) or [openMinutes, closeMinutes] counted from local midnight. Only fill this when the site states opening hours; otherwise null.
 - sources: object mapping each key above to the array of page URLs you used
 - confidence: object mapping each key above to a number from 0 to 1
@@ -109,7 +143,8 @@ Return ONLY a JSON object, no prose and no code fences, with these keys:
 Rules:
 - Write every text field in the store's own language.
 - Never invent. If the site does not say something, use null. A null is far more useful than a plausible guess.
-- Do not list individual products or prices: the assistant reads those live from the store's API and a copy would go stale.
+- Do not list individual products or prices: the assistant reads those live from the store's API and a copy would go stale. This applies to faqs too.
+- Every faq answer must be supported by the page it cites. An unanswerable question is simply left out.
 - Keep each text field under 1500 characters, summarizing rather than transcribing.`;
 
 /** How much prose we are willing to send in one request. */
@@ -202,7 +237,7 @@ export async function extractStoreProfile(
   pages: CrawledPage[],
   options: { signal?: AbortSignal } = {},
 ): Promise<ExtractionResult> {
-  if (pages.length === 0) return { fields: [], agentTone: null, pagesRead: 0 };
+  if (pages.length === 0) return { fields: [], knowledge: [], agentTone: null, pagesRead: 0 };
 
   const handle = await getLlm();
   const userMessage = buildExtractionUserMessage(pages);
@@ -239,6 +274,7 @@ export async function extractStoreProfile(
 
   return {
     fields: toProposedFields(parsed, pages),
+    knowledge: toProposedKnowledge(parsed, pages),
     agentTone: sanitizeText(parsed.agentTone ?? null, 300),
     pagesRead: pages.length,
   };
@@ -297,6 +333,48 @@ function warningsFor(value: string | number[][] | null, corpus: string): Proposa
   if (INSTRUCTION_MARKERS.some((re) => re.test(value))) warnings.push('looks_like_instructions');
   if (findUngroundedDetails(value, corpus)) warnings.push('ungrounded_details');
   return warnings;
+}
+
+/**
+ * Turn the model's FAQ list into reviewable knowledge proposals.
+ *
+ * Held to exactly the same standard as every other field: sanitized, capped,
+ * and flagged when it reads like an instruction or cites a URL / account
+ * number that never appeared in the crawled text. A knowledge entry is
+ * arguably the sharpest of these — whatever the operator accepts here is
+ * something the agent will later state to a customer as fact.
+ */
+export function toProposedKnowledge(proposal: RawProposal, pages: CrawledPage[]): ProposedKnowledge[] {
+  const crawled = new Set(pages.map((page) => page.url));
+  const corpus = pages.map((page) => page.text).join('\n');
+  const out: ProposedKnowledge[] = [];
+  const seen = new Set<string>();
+
+  for (const raw of proposal.faqs ?? []) {
+    if (out.length >= MAX_FAQS) break;
+    const question = sanitizeText(raw.question ?? null, MAX_FAQ_QUESTION_CHARS);
+    const answer = sanitizeText(raw.answer ?? null, MAX_FAQ_ANSWER_CHARS);
+    if (!question || !answer) continue;
+
+    // The model happily restates the same policy in three phrasings; the
+    // reviewer should not have to reject the same fact three times.
+    const key = question.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    // Only keep a source we actually fetched — a cited URL we never crawled is
+    // a page the reviewer cannot check the claim against.
+    const sourceUrl = raw.sourceUrl && crawled.has(raw.sourceUrl) ? raw.sourceUrl : null;
+
+    out.push({
+      question,
+      answer,
+      sourceUrl,
+      warnings: [...new Set([...warningsFor(question, corpus), ...warningsFor(answer, corpus)])],
+    });
+  }
+
+  return out;
 }
 
 function toProposedFields(proposal: RawProposal, pages: CrawledPage[]): ProposedField[] {

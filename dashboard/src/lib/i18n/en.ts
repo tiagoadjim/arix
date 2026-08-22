@@ -574,6 +574,9 @@ export const en: Dictionary = {
       doneEditing: 'Done',
       warningInstructions: 'This text reads like an instruction rather than store information. Read it carefully before keeping it.',
       warningUngrounded: 'This contains a link or a number we could not find on your site. Check it against your own records before keeping it.',
+      knowledgeTitle: 'Frequent questions we found',
+      knowledgeSubtitle:
+        'Each one you accept becomes something the agent may state as fact. Check them against your own site before keeping them.',
       selectedCount: 'Keeping {n} of {total}',
       save: 'Save what I kept',
       pagesReadTitle: 'Pages we read',

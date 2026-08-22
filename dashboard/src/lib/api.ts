@@ -237,12 +237,26 @@ export interface ProposedField {
   warnings: ProposalWarning[];
 }
 
+/** A knowledge-base entry proposed by a site scan. Mirrors the server's
+ * ProposedKnowledge: a suggestion only, never written until accepted. */
+export interface ProposedKnowledge {
+  question: string;
+  answer: string;
+  sourceUrl: string | null;
+  warnings: ProposalWarning[];
+}
+
 export interface SiteScanJob {
   id: string;
   state: ScanState;
   root: string;
   progress: { pagesFound: number; pagesFetched: number; maxPages: number; currentUrl: string | null };
-  result: { fields: ProposedField[]; agentTone: string | null; pagesRead: string[] } | null;
+  result: {
+    fields: ProposedField[];
+    knowledge: ProposedKnowledge[];
+    agentTone: string | null;
+    pagesRead: string[];
+  } | null;
   error: string | null;
 }
 

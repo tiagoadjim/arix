@@ -6,7 +6,13 @@
 
 import { DEFAULT_VERTICAL, type Vertical } from '../verticals';
 
-export const BUILTIN_SKILL_IDS = ['catalog', 'orders', 'payments', 'handoff'] as const;
+export const BUILTIN_SKILL_IDS = [
+  'catalog',
+  'orders',
+  'payments',
+  'handoff',
+  'knowledge',
+] as const;
 export type BuiltinSkillId = (typeof BUILTIN_SKILL_IDS)[number];
 
 /**
@@ -21,8 +27,8 @@ const VERTICAL_DEFAULT_SKILLS: Record<Vertical, readonly BuiltinSkillId[]> = {
   // Unchanged from before verticals existed: every installation that predates
   // the setting resolves to `ecommerce` and keeps exactly this list.
   ecommerce: ['catalog', 'orders', 'payments', 'handoff'],
-  services: ['handoff'],
-  appointments: ['handoff'],
+  services: ['knowledge', 'handoff'],
+  appointments: ['knowledge', 'handoff'],
 };
 
 export function defaultEnabledSkills(vertical: Vertical = DEFAULT_VERTICAL): string[] {

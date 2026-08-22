@@ -2,6 +2,7 @@ import { catalogTools } from './catalog';
 import { orderTools } from './orders';
 import { paymentTools } from './payments';
 import { handoffTools } from './handoff';
+import { knowledgeTools } from './knowledge';
 import type { ToolSpec } from '../agent/tool-spec';
 export {
   BUILTIN_SKILL_IDS,
@@ -48,6 +49,13 @@ export const BUILTIN_SKILLS: readonly SkillMeta[] = [
     description: 'Confirm a transfer receipt against an order total.',
     toolNames: paymentTools.map((t) => t.definition.function.name),
     tools: paymentTools,
+  },
+  {
+    id: 'knowledge',
+    label: 'Knowledge base',
+    description: "Answer questions from the business's own reviewed knowledge base.",
+    toolNames: knowledgeTools.map((t) => t.definition.function.name),
+    tools: knowledgeTools,
   },
   {
     id: 'handoff',

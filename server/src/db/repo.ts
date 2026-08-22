@@ -1,4 +1,5 @@
 import { many, one, pool } from './pool';
+import { normalizeSearchText } from './search-text';
 import { config } from '../config';
 import { logger } from '../logger';
 import type {
@@ -43,6 +44,143 @@ export interface AuditEvent {
   ip_hash: string | null;
   metadata: Record<string, unknown>;
   created_at: string;
+}
+
+// ---- Knowledge base ---------------------------------------------------------
+
+export interface KnowledgeEntry {
+  id: string;
+  account_id: string;
+  question: string;
+  answer: string;
+  tags: string[];
+  source_url: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Hard ceiling on what one search hands the model. The whole result set is
+ * inlined into the next completion, so an unbounded LIMIT would be a way for a
+ * large knowledge base to blow the context window (and the bill) on one turn. */
+export const KNOWLEDGE_SEARCH_LIMIT = 5;
+
+/** Neutralize LIKE metacharacters so a customer question containing '%' or
+ * '_' is matched literally instead of turning into a wildcard that matches
+ * every entry. Paired with `escape '\'` in the query below. */
+function escapeLike(value: string): string {
+  return value.replace(/[\\%_]/g, (ch) => `\\${ch}`);
+}
+
+export async function searchKnowledgeEntries(
+  query: string,
+  limit = KNOWLEDGE_SEARCH_LIMIT,
+): Promise<KnowledgeEntry[]> {
+  const normalized = normalizeSearchText(query);
+  if (!normalized) return [];
+  // Full-text first, ILIKE second: websearch_to_tsquery handles whole words and
+  // ranks them, but it never matches a partial one, and a customer typing
+  // "envi" or a product code fragment still needs an answer. Both arms search
+  // the SAME normalized column, so accent-insensitivity holds either way.
+  return many<KnowledgeEntry>(
+    // `rank` is ordered by but not selected: it is an implementation detail of
+    // the ranking, not a field of the entry, and selecting it would leak into
+    // every DTO built from this row.
+    `select * from knowledge_entries
+      where account_id = $1
+        and (to_tsvector('simple', search_text) @@ websearch_to_tsquery('simple', $2)
+             or search_text like $3 escape '\\')
+      order by ts_rank(to_tsvector('simple', search_text),
+                       websearch_to_tsquery('simple', $2)) desc,
+               updated_at desc
+      limit $4`,
+    [ACCOUNT, normalized, `%${escapeLike(normalized)}%`, limit],
+  );
+}
+
+export async function listKnowledgeEntries(limit = 200, offset = 0): Promise<KnowledgeEntry[]> {
+  return many<KnowledgeEntry>(
+    `select * from knowledge_entries
+      where account_id = $1
+      order by updated_at desc
+      limit $2 offset $3`,
+    [ACCOUNT, limit, offset],
+  );
+}
+
+export async function countKnowledgeEntries(): Promise<number> {
+  const row = await one<{ count: string }>(
+    'select count(*)::text as count from knowledge_entries where account_id = $1',
+    [ACCOUNT],
+  );
+  return Number(row?.count ?? 0);
+}
+
+export async function getKnowledgeEntry(id: string): Promise<KnowledgeEntry | null> {
+  return one<KnowledgeEntry>(
+    'select * from knowledge_entries where account_id = $1 and id = $2',
+    [ACCOUNT, id],
+  );
+}
+
+export async function createKnowledgeEntry(input: {
+  question: string;
+  answer: string;
+  tags?: string[];
+  sourceUrl?: string | null;
+  createdBy?: string | null;
+}): Promise<KnowledgeEntry> {
+  const tags = input.tags ?? [];
+  const row = await one<KnowledgeEntry>(
+    `insert into knowledge_entries
+       (account_id, question, answer, tags, source_url, created_by, search_text)
+     values ($1, $2, $3, $4, $5, $6, $7)
+     returning *`,
+    [
+      ACCOUNT,
+      input.question,
+      input.answer,
+      tags,
+      input.sourceUrl ?? null,
+      input.createdBy ?? null,
+      normalizeSearchText(input.question, input.answer, tags.join(' ')),
+    ],
+  );
+  if (!row) throw new Error('failed to insert knowledge entry');
+  return row;
+}
+
+export async function updateKnowledgeEntry(
+  id: string,
+  input: { question: string; answer: string; tags?: string[] },
+): Promise<KnowledgeEntry | null> {
+  const tags = input.tags ?? [];
+  return one<KnowledgeEntry>(
+    `update knowledge_entries
+        set question = $3,
+            answer = $4,
+            tags = $5,
+            search_text = $6,
+            updated_at = now()
+      where account_id = $1 and id = $2
+      returning *`,
+    [
+      ACCOUNT,
+      id,
+      input.question,
+      input.answer,
+      tags,
+      normalizeSearchText(input.question, input.answer, tags.join(' ')),
+    ],
+  );
+}
+
+export async function deleteKnowledgeEntry(id: string): Promise<boolean> {
+  const row = await one<{ id: string }>(
+    'delete from knowledge_entries where account_id = $1 and id = $2 returning id',
+    [ACCOUNT, id],
+  );
+  return row !== null;
 }
 
 // ---- Conversations ----------------------------------------------------------

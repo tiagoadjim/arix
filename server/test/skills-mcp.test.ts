@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   BUILTIN_SKILL_IDS,
+  defaultEnabledSkills,
   normalizeEnabledSkills,
   toolsForEnabledSkills,
   buildSkillCatalog,
@@ -15,9 +16,27 @@ import {
 } from '../src/mcp/types';
 
 describe('skills registry', () => {
-  it('defaults to every built-in skill', () => {
-    expect(normalizeEnabledSkills(undefined)).toEqual([...BUILTIN_SKILL_IDS]);
-    expect(normalizeEnabledSkills('nope')).toEqual([...BUILTIN_SKILL_IDS]);
+  it('falls back to the vertical defaults when unset or invalid', () => {
+    expect(normalizeEnabledSkills(undefined)).toEqual(defaultEnabledSkills());
+    expect(normalizeEnabledSkills('nope')).toEqual(defaultEnabledSkills());
+  });
+
+  it('keeps the pre-vertical skill set for an ecommerce store', () => {
+    // Installations that predate business.vertical resolve to `ecommerce` and
+    // must keep exactly the skills they had, even as new skills are added to
+    // BUILTIN_SKILL_IDS for other verticals.
+    expect(defaultEnabledSkills('ecommerce')).toEqual([
+      'catalog',
+      'orders',
+      'payments',
+      'handoff',
+    ]);
+    expect(normalizeEnabledSkills(undefined)).toEqual(defaultEnabledSkills('ecommerce'));
+  });
+
+  it('registers every known skill id in the catalog', () => {
+    const catalog = buildSkillCatalog([]);
+    expect(catalog.map((entry) => entry.id).sort()).toEqual([...BUILTIN_SKILL_IDS].sort());
   });
 
   it('keeps an intentional empty list', () => {

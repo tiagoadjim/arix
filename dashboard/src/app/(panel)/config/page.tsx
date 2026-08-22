@@ -39,6 +39,7 @@ import {
 } from '@/components/settings/mcp-fields';
 import { WhatsAppPanel } from '@/components/settings/whatsapp-panel';
 import { StaffPanel } from '@/components/settings/staff-panel';
+import { KnowledgePanel } from '@/components/settings/knowledge-panel';
 import { isDirty } from '@/components/settings/settings-form-utils';
 
 type Grouped = Record<string, SettingDto[]>;
@@ -106,6 +107,7 @@ export default function SettingsPage() {
             <TabsTrigger value="mcp">{t.settings.tabMcp}</TabsTrigger>
             <TabsTrigger value="business">{t.settings.tabBusiness}</TabsTrigger>
             <TabsTrigger value="whatsapp">{t.settings.tabWhatsapp}</TabsTrigger>
+            <TabsTrigger value="knowledge">{t.settings.tabKnowledge}</TabsTrigger>
             <TabsTrigger value="staff">{t.settings.tabStaff}</TabsTrigger>
           </TabsList>
         </div>
@@ -134,6 +136,9 @@ export default function SettingsPage() {
         </TabsContent>
         <TabsContent value="whatsapp" className="pt-4">
           <WhatsAppPanel />
+        </TabsContent>
+        <TabsContent value="knowledge" className="pt-4">
+          <KnowledgePanel />
         </TabsContent>
         <TabsContent value="staff" className="pt-4">
           <StaffPanel />

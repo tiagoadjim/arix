@@ -1916,5 +1916,129 @@ export function createApiServer(deps: {
     if (!res.headersSent) res.status(500).json({ error: 'internal_error' });
   });
 
+
+  // ---- Knowledge base -------------------------------------------------------
+  //
+  // Entries are what the agent is allowed to state as fact in a business with
+  // no catalog behind it, so writing one is an administrator action and every
+  // write is audited. `search_text` is a derived column maintained by the repo
+  // and is deliberately absent from the DTO: it is an implementation detail of
+  // matching, not something to show or let a client write back.
+
+  const MAX_KNOWLEDGE_QUESTION = 500;
+  const MAX_KNOWLEDGE_ANSWER = 5_000;
+  const MAX_KNOWLEDGE_TAGS = 10;
+  const MAX_KNOWLEDGE_TAG_LEN = 40;
+  const MAX_KNOWLEDGE_ENTRIES = 2_000;
+
+  const knowledgeDto = (entry: repo.KnowledgeEntry) => ({
+    id: entry.id,
+    question: entry.question,
+    answer: entry.answer,
+    tags: entry.tags,
+    source_url: entry.source_url,
+    created_at: entry.created_at,
+    updated_at: entry.updated_at,
+  });
+
+  /** Parse and bound a write body. Returns null when it is unusable, so the
+   * route can answer 400 without duplicating the checks per verb. */
+  const parseKnowledgeBody = (
+    body: unknown,
+  ): { question: string; answer: string; tags: string[] } | null => {
+    const raw = (body ?? {}) as Record<string, unknown>;
+    const question = boundedString(raw.question ?? '', MAX_KNOWLEDGE_QUESTION)?.trim() ?? '';
+    const answer = boundedString(raw.answer ?? '', MAX_KNOWLEDGE_ANSWER)?.trim() ?? '';
+    if (!question || !answer) return null;
+    const rawTags = Array.isArray(raw.tags) ? raw.tags : [];
+    const tags = [
+      ...new Set(
+        rawTags
+          .map((tag) => boundedString(tag, MAX_KNOWLEDGE_TAG_LEN)?.trim().toLowerCase() ?? '')
+          .filter(Boolean),
+      ),
+    ].slice(0, MAX_KNOWLEDGE_TAGS);
+    return { question, answer, tags };
+  };
+
+  app.get(
+    '/api/knowledge',
+    requireAuth,
+    requireAdmin,
+    ah(async (_req, res) => {
+      const entries = await repo.listKnowledgeEntries();
+      res.json({ entries: entries.map(knowledgeDto), total: await repo.countKnowledgeEntries() });
+    }),
+  );
+
+  app.post(
+    '/api/knowledge',
+    requireAuth,
+    requireAdmin,
+    ah(async (req, res) => {
+      const parsed = parseKnowledgeBody(req.body);
+      if (!parsed) {
+        res.status(400).json({ error: 'invalid_knowledge_entry' });
+        return;
+      }
+      // Bounded so a runaway import can't grow the base to the point where the
+      // operator can no longer review what the agent is allowed to say.
+      if ((await repo.countKnowledgeEntries()) >= MAX_KNOWLEDGE_ENTRIES) {
+        res.status(409).json({ error: 'knowledge_limit_reached' });
+        return;
+      }
+      const sourceUrl = boundedString((req.body as Record<string, unknown>)?.source_url ?? '', 2_048);
+      const entry = await repo.createKnowledgeEntry({
+        ...parsed,
+        sourceUrl: sourceUrl || null,
+        createdBy: req.user?.id ?? null,
+      });
+      await audit(req, 'knowledge.created', 'knowledge', entry.id);
+      res.status(201).json(knowledgeDto(entry));
+    }),
+  );
+
+  app.put(
+    '/api/knowledge/:id',
+    requireAuth,
+    requireAdmin,
+    ah(async (req, res) => {
+      if (!isUuid(req.params.id)) {
+        res.status(400).json({ error: 'invalid_id' });
+        return;
+      }
+      const parsed = parseKnowledgeBody(req.body);
+      if (!parsed) {
+        res.status(400).json({ error: 'invalid_knowledge_entry' });
+        return;
+      }
+      const entry = await repo.updateKnowledgeEntry(req.params.id, parsed);
+      if (!entry) {
+        res.status(404).json({ error: 'knowledge_entry_not_found' });
+        return;
+      }
+      await audit(req, 'knowledge.updated', 'knowledge', entry.id);
+      res.json(knowledgeDto(entry));
+    }),
+  );
+
+  app.delete(
+    '/api/knowledge/:id',
+    requireAuth,
+    requireAdmin,
+    ah(async (req, res) => {
+      if (!isUuid(req.params.id)) {
+        res.status(400).json({ error: 'invalid_id' });
+        return;
+      }
+      if (!(await repo.deleteKnowledgeEntry(req.params.id))) {
+        res.status(404).json({ error: 'knowledge_entry_not_found' });
+        return;
+      }
+      await audit(req, 'knowledge.deleted', 'knowledge', req.params.id);
+      res.status(204).end();
+    }),
+  );
+
   return app;
 }

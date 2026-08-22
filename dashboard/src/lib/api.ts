@@ -7,6 +7,8 @@ import type {
   StaffOrder,
   StaffRole,
   UsageSummaryRow,
+  KnowledgeEntry,
+  KnowledgeEntryInput,
 } from './types';
 import type { Dictionary } from './i18n';
 
@@ -383,6 +385,14 @@ export const api = {
     jpost<Message>(`/api/conversations/${id}/messages`, { body, clientId }),
   orders: (id: string, signal?: AbortSignal) => jget<{ orders: StaffOrder[] }>(`/api/conversations/${id}/orders`, signal),
   mediaUrl: (path: string) => `/api/media/${path.split('/').map(encodeURIComponent).join('/')}`,
+
+  // ---- knowledge base ----
+  knowledge: (signal?: AbortSignal) =>
+    jget<{ entries: KnowledgeEntry[]; total: number }>('/api/knowledge', signal),
+  createKnowledge: (input: KnowledgeEntryInput) => jpost<KnowledgeEntry>('/api/knowledge', input),
+  updateKnowledge: (id: string, input: KnowledgeEntryInput) =>
+    jput<KnowledgeEntry>(`/api/knowledge/${id}`, input),
+  deleteKnowledge: (id: string) => jdelete<void>(`/api/knowledge/${id}`),
 
   // ---- setup wizard ----
   setupStatus: () => jget<SetupStatus>('/api/setup/status', undefined, false),

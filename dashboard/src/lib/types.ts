@@ -117,3 +117,21 @@ export interface AuditEvent {
   metadata: Record<string, unknown>;
   created_at: string;
 }
+
+/** A reviewed business fact the agent is allowed to state. `search_text` is a
+ * derived column on the server and is deliberately not part of this DTO. */
+export interface KnowledgeEntry {
+  id: string;
+  question: string;
+  answer: string;
+  tags: string[];
+  source_url: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface KnowledgeEntryInput {
+  question: string;
+  answer: string;
+  tags: string[];
+}

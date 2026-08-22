@@ -285,6 +285,30 @@ export async function vertical(): Promise<Vertical> {
   return normalizeVertical(valueOf<string>(meta, 'business.vertical'));
 }
 
+export interface AppointmentSettings {
+  slotMinutes: number;
+  horizonDays: number;
+  leadMinutes: number;
+  /** Empty means the agent accepts a free-text service description. */
+  services: string[];
+}
+
+export async function appointmentSettings(): Promise<AppointmentSettings> {
+  const meta = await resolve();
+  const rawServices = valueOf<unknown>(meta, 'appointments.services');
+  const services = Array.isArray(rawServices)
+    ? rawServices.filter((s): s is string => typeof s === 'string' && s.trim() !== '')
+    : typeof rawServices === 'string'
+      ? rawServices.split(',').map((s) => s.trim()).filter(Boolean)
+      : [];
+  return {
+    slotMinutes: valueOf<number>(meta, 'appointments.slot_minutes'),
+    horizonDays: valueOf<number>(meta, 'appointments.horizon_days'),
+    leadMinutes: valueOf<number>(meta, 'appointments.lead_minutes'),
+    services,
+  };
+}
+
 /** The weekly delivery schedule (see agent/hours.ts's Schedule shape). */
 export async function hoursConfig(): Promise<Schedule> {
   const meta = await resolve();

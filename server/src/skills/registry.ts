@@ -3,6 +3,7 @@ import { orderTools } from './orders';
 import { paymentTools } from './payments';
 import { handoffTools } from './handoff';
 import { knowledgeTools } from './knowledge';
+import { appointmentTools } from './appointments';
 import type { ToolSpec } from '../agent/tool-spec';
 export {
   BUILTIN_SKILL_IDS,
@@ -56,6 +57,13 @@ export const BUILTIN_SKILLS: readonly SkillMeta[] = [
     description: "Answer questions from the business's own reviewed knowledge base.",
     toolNames: knowledgeTools.map((t) => t.definition.function.name),
     tools: knowledgeTools,
+  },
+  {
+    id: 'appointments',
+    label: 'Appointments',
+    description: 'Quote availability, book, confirm and cancel appointments in the agenda.',
+    toolNames: appointmentTools.map((t) => t.definition.function.name),
+    tools: appointmentTools,
   },
   {
     id: 'handoff',

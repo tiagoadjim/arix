@@ -183,6 +183,168 @@ export async function deleteKnowledgeEntry(id: string): Promise<boolean> {
   return row !== null;
 }
 
+// ---- Appointments -----------------------------------------------------------
+
+export type AppointmentStatus = 'booked' | 'confirmed' | 'cancelled' | 'completed' | 'no_show';
+
+/** Statuses that still occupy a slot. Mirrors the partial unique index in
+ * migration 0008 — if these ever diverge, the database and the availability
+ * query would disagree about what is free. */
+export const ACTIVE_APPOINTMENT_STATUSES: readonly AppointmentStatus[] = ['booked', 'confirmed'];
+
+export interface Appointment {
+  id: string;
+  account_id: string;
+  conversation_id: string;
+  customer_name: string | null;
+  customer_phone: string | null;
+  service: string;
+  starts_at: string;
+  ends_at: string;
+  status: AppointmentStatus;
+  notes: string | null;
+  reminders_enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Thrown when the slot was taken between quoting it and booking it. Carries no
+ * detail on purpose: the caller re-quotes availability rather than reporting
+ * anything about the other customer's appointment. */
+export class SlotTakenError extends Error {
+  constructor() {
+    super('slot_taken');
+    this.name = 'SlotTakenError';
+  }
+}
+
+/** Active appointments overlapping [from, to) — the busy list availability
+ * subtracts from the schedule. */
+export async function getBusyAppointments(from: Date, to: Date): Promise<Appointment[]> {
+  return many<Appointment>(
+    `select * from appointments
+      where account_id = $1
+        and status = any($2)
+        and starts_at < $4
+        and ends_at > $3
+      order by starts_at`,
+    [ACCOUNT, ACTIVE_APPOINTMENT_STATUSES as unknown as string[], from, to],
+  );
+}
+
+export async function createAppointment(input: {
+  conversationId: string;
+  customerName?: string | null;
+  customerPhone?: string | null;
+  service: string;
+  startsAt: Date;
+  endsAt: Date;
+  notes?: string | null;
+}): Promise<Appointment> {
+  try {
+    const row = await one<Appointment>(
+      `insert into appointments
+         (account_id, conversation_id, customer_name, customer_phone, service, starts_at, ends_at, notes)
+       values ($1, $2, $3, $4, $5, $6, $7, $8)
+       returning *`,
+      [
+        ACCOUNT,
+        input.conversationId,
+        input.customerName ?? null,
+        input.customerPhone ?? null,
+        input.service,
+        input.startsAt,
+        input.endsAt,
+        input.notes ?? null,
+      ],
+    );
+    if (!row) throw new Error('failed to insert appointment');
+    return row;
+  } catch (err) {
+    // 23505 = unique_violation on appointments_active_slot_idx: someone else
+    // took this exact slot first. That is an expected outcome of two customers
+    // racing, not a fault to log as one.
+    if (typeof err === 'object' && err !== null && (err as { code?: string }).code === '23505') {
+      throw new SlotTakenError();
+    }
+    throw err;
+  }
+}
+
+export async function getAppointment(id: string): Promise<Appointment | null> {
+  return one<Appointment>('select * from appointments where account_id = $1 and id = $2', [
+    ACCOUNT,
+    id,
+  ]);
+}
+
+/** Upcoming active appointments for one conversation, soonest first. */
+export async function getUpcomingAppointments(
+  conversationId: string,
+  now: Date = new Date(),
+  limit = 5,
+): Promise<Appointment[]> {
+  return many<Appointment>(
+    `select * from appointments
+      where account_id = $1
+        and conversation_id = $2
+        and status = any($3)
+        and ends_at >= $4
+      order by starts_at
+      limit $5`,
+    [ACCOUNT, conversationId, ACTIVE_APPOINTMENT_STATUSES as unknown as string[], now, limit],
+  );
+}
+
+/**
+ * Move an appointment to a new status, but only from one it may legally leave.
+ *
+ * Scoped by conversation_id as well as id: the agent only ever acts on behalf
+ * of the chat it is in, so a hallucinated or guessed id from another customer's
+ * appointment finds nothing rather than cancelling it.
+ */
+export async function setAppointmentStatus(
+  id: string,
+  conversationId: string,
+  status: AppointmentStatus,
+  from: readonly AppointmentStatus[] = ACTIVE_APPOINTMENT_STATUSES,
+): Promise<Appointment | null> {
+  return one<Appointment>(
+    `update appointments
+        set status = $4, updated_at = now()
+      where account_id = $1
+        and id = $2
+        and conversation_id = $3
+        and status = any($5)
+      returning *`,
+    [ACCOUNT, id, conversationId, status, from as unknown as string[]],
+  );
+}
+
+/** Turn off reminders for every appointment in a conversation — the opt-out
+ * path. Returns how many were affected so the caller can confirm honestly. */
+export async function disableAppointmentReminders(conversationId: string): Promise<number> {
+  const rows = await many<{ id: string }>(
+    `update appointments
+        set reminders_enabled = false, updated_at = now()
+      where account_id = $1 and conversation_id = $2 and reminders_enabled
+      returning id`,
+    [ACCOUNT, conversationId],
+  );
+  return rows.length;
+}
+
+/** Agenda view for the dashboard: everything in a window, any status. */
+export async function listAppointments(from: Date, to: Date, limit = 500): Promise<Appointment[]> {
+  return many<Appointment>(
+    `select * from appointments
+      where account_id = $1 and starts_at >= $2 and starts_at < $3
+      order by starts_at
+      limit $4`,
+    [ACCOUNT, from, to, limit],
+  );
+}
+
 // ---- Conversations ----------------------------------------------------------
 
 export async function getOrCreateConversation(input: {

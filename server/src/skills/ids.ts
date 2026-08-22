@@ -12,6 +12,7 @@ export const BUILTIN_SKILL_IDS = [
   'payments',
   'handoff',
   'knowledge',
+  'appointments',
 ] as const;
 export type BuiltinSkillId = (typeof BUILTIN_SKILL_IDS)[number];
 
@@ -28,7 +29,7 @@ const VERTICAL_DEFAULT_SKILLS: Record<Vertical, readonly BuiltinSkillId[]> = {
   // the setting resolves to `ecommerce` and keeps exactly this list.
   ecommerce: ['catalog', 'orders', 'payments', 'handoff'],
   services: ['knowledge', 'handoff'],
-  appointments: ['knowledge', 'handoff'],
+  appointments: ['appointments', 'knowledge', 'handoff'],
 };
 
 export function defaultEnabledSkills(vertical: Vertical = DEFAULT_VERTICAL): string[] {

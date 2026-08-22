@@ -220,6 +220,48 @@ export const SETTINGS_SCHEMA: readonly SettingDefinition[] = [
     label: 'Automatically mark matched receipts as paid (unsafe unless independently reconciled)',
   },
 
+  // ---- Appointments (vertical: appointments) ----------------------------------
+  {
+    key: 'appointments.slot_minutes',
+    group: 'appointments',
+    type: 'number',
+    min: 5,
+    max: 480,
+    default: 60,
+    seedEnv: 'APPOINTMENTS_SLOT_MINUTES',
+    label: 'Length of one appointment, in minutes',
+  },
+  {
+    key: 'appointments.horizon_days',
+    group: 'appointments',
+    type: 'number',
+    min: 1,
+    max: 90,
+    default: 14,
+    seedEnv: 'APPOINTMENTS_HORIZON_DAYS',
+    label: 'How many days ahead customers may book',
+  },
+  {
+    key: 'appointments.lead_minutes',
+    group: 'appointments',
+    type: 'number',
+    min: 0,
+    max: 10_080,
+    default: 120,
+    seedEnv: 'APPOINTMENTS_LEAD_MINUTES',
+    label: 'Minimum notice before an appointment can start',
+  },
+  {
+    key: 'appointments.services',
+    group: 'appointments',
+    type: 'json',
+    // Empty = the agent accepts whatever the customer describes. A configured
+    // list is offered to the customer and constrains what can be booked.
+    default: [],
+    seedEnv: 'APPOINTMENTS_SERVICES',
+    label: 'Bookable services (JSON array of names; empty = free text)',
+  },
+
   // ---- Business profile ---------------------------------------------------------
   {
     key: 'business.name',

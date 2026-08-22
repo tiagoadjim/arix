@@ -49,6 +49,7 @@ OJO: sobre si AHORA estamos atendiendo MANDA el estado 🟢/🔴 de "Fecha y hor
     const hasCancel = p.enabledTools.has('cancel_appointment');
     const hasConfirm = p.enabledTools.has('confirm_appointment');
     const hasKnowledge = p.enabledTools.has('search_knowledge');
+    const hasStop = p.enabledTools.has('stop_appointment_reminders');
     const hasHandoff = p.enabledTools.has('handoff_to_human');
 
     const capabilities = [
@@ -76,7 +77,7 @@ OJO: sobre si AHORA estamos atendiendo MANDA el estado 🟢/🔴 de "Fecha y hor
 - Si el cliente responde a un aviso de turno (por ejemplo "confirmo", "ahí estoy", "no voy a poder", "necesito cambiarlo"), NO lo trates como una consulta nueva.
 - Confirmación → ${hasConfirm ? "llamá a 'confirm_appointment'" : 'agradecé y dejá constancia'}.
 - No puede ir o quiere otro día → ${hasCancel ? "llamá a 'cancel_appointment'" : 'ofrecé que un integrante lo reprograme'}${hasAvailability ? " y ofrecé alternativas con 'check_availability'" : ''}.
-- Si no queda claro a qué turno se refiere${hasFind ? ", buscalo con 'find_appointment' antes de actuar" : ', preguntáselo antes de actuar'}.`
+- Si no queda claro a qué turno se refiere${hasFind ? ", buscalo con 'find_appointment' antes de actuar" : ', preguntáselo antes de actuar'}.${hasStop ? "\n- Si pide que no le escribas más (\"no me escribas\", \"stop\", \"basta\"), llamá a 'stop_appointment_reminders' AHORA y confirmale con buena onda que no le llega nada más. No discutas ni intentes convencerlo." : ''}`
         : '';
 
     const identity =
@@ -147,6 +148,7 @@ HEADS UP: whether we're open RIGHT NOW is ALWAYS governed by the 🟢/🔴 statu
     const hasCancel = p.enabledTools.has('cancel_appointment');
     const hasConfirm = p.enabledTools.has('confirm_appointment');
     const hasKnowledge = p.enabledTools.has('search_knowledge');
+    const hasStop = p.enabledTools.has('stop_appointment_reminders');
     const hasHandoff = p.enabledTools.has('handoff_to_human');
 
     const capabilities = [
@@ -174,7 +176,7 @@ HEADS UP: whether we're open RIGHT NOW is ALWAYS governed by the 🟢/🔴 statu
 - If the customer is replying to an appointment reminder (e.g. "confirmed", "I'll be there", "I can't make it", "I need to change it"), do NOT treat it as a fresh enquiry.
 - Confirmation → ${hasConfirm ? "call 'confirm_appointment'" : 'thank them and note it'}.
 - Can't make it or wants another day → ${hasCancel ? "call 'cancel_appointment'" : 'offer to have a teammate reschedule'}${hasAvailability ? " and offer alternatives with 'check_availability'" : ''}.
-- If it's unclear which appointment they mean${hasFind ? ", look it up with 'find_appointment' before acting" : ', ask them before acting'}.`
+- If it's unclear which appointment they mean${hasFind ? ", look it up with 'find_appointment' before acting" : ', ask them before acting'}.${hasStop ? "\n- If they ask you to stop messaging them (\"stop\", \"unsubscribe\", \"leave me alone\"), call 'stop_appointment_reminders' NOW and warmly confirm nothing else will arrive. Do not argue or try to talk them out of it." : ''}`
         : '';
 
     const identity =

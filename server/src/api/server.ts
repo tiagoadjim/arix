@@ -38,7 +38,9 @@ import {
   llm as llmConfig,
   enabledSkills,
   mcpServers,
+  appointmentSettings,
 } from '../config/runtime';
+import { zonedWallTimeToUtc } from '../agent/slots';
 import { encryptSecret } from '../config/secret';
 import { PROVIDERS, type ProviderSpec } from '../agent/llm/providers';
 import {
@@ -222,6 +224,10 @@ const ah =
   (fn: (req: AuthedRequest, res: Response, next: NextFunction) => Promise<void>): RequestHandler =>
   (req, res, next) =>
     void fn(req as AuthedRequest, res, next).catch(next);
+
+/** Statuses the agenda's action buttons may set. Excludes 'booked', which is
+ * the initial state and not something to move back to. */
+const STAFF_APPOINTMENT_TRANSITIONS = new Set(['confirmed', 'completed', 'cancelled', 'no_show']);
 
 export function createApiServer(deps: {
   gateway: WhatsAppGateway;
@@ -2037,6 +2043,156 @@ export function createApiServer(deps: {
       }
       await audit(req, 'knowledge.deleted', 'knowledge', req.params.id);
       res.status(204).end();
+    }),
+  );
+
+
+  // ---- Appointments: the agenda ---------------------------------------------
+  //
+  // Staff-level, not admin-only. Looking at the day and taking a booking over
+  // the phone is daily work, like the inbox — not configuration.
+
+  const MAX_SERVICE_CHARS = 200;
+  const MAX_APPOINTMENT_NOTES = 2_000;
+  const MAX_AGENDA_DAYS = 31;
+
+  const agendaDto = (row: repo.AgendaAppointment) => ({
+    id: row.id,
+    conversation_id: row.conversation_id,
+    customer_name: row.customer_name ?? row.conversation_name,
+    customer_phone: row.customer_phone,
+    service: row.service,
+    starts_at: row.starts_at,
+    ends_at: row.ends_at,
+    status: row.status,
+    notes: row.notes,
+    reminders_enabled: row.reminders_enabled,
+    /** False for a walk-in staff typed in — the UI says so, because that
+     * customer will never get a reminder (no conversation to send it to). */
+    from_chat: row.conversation_id !== null,
+  });
+
+  /** Resolve a YYYY-MM-DD in the business's own timezone to a UTC day window.
+   * Doing it server-side keeps "today" meaning the same thing for a member of
+   * staff travelling, or a browser with a skewed clock. */
+  const agendaWindow = async (
+    date: string,
+    days: number,
+  ): Promise<{ from: Date; to: Date } | null> => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+    const [year, month, day] = date.split('-').map(Number) as [number, number, number];
+    if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) return null;
+    const { timezone } = await businessProfile();
+    const from = zonedWallTimeToUtc({ year, month, day, hour: 0, minute: 0 }, timezone);
+    if (Number.isNaN(from.getTime())) return null;
+    return { from, to: new Date(from.getTime() + days * 86_400_000) };
+  };
+
+  app.get(
+    '/api/appointments',
+    requireAuth,
+    ah(async (req, res) => {
+      const date = boundedString(req.query.date ?? '', 10) ?? '';
+      const days = Math.min(Math.max(positiveInteger(req.query.days) ?? 1, 1), MAX_AGENDA_DAYS);
+      const window = await agendaWindow(date, days);
+      if (!window) {
+        res.status(400).json({ error: 'invalid_date' });
+        return;
+      }
+      const rows = await repo.listAgenda(window.from, window.to);
+      const { timezone } = await businessProfile();
+      res.json({ timezone, appointments: rows.map(agendaDto) });
+    }),
+  );
+
+  app.post(
+    '/api/appointments',
+    requireAuth,
+    ah(async (req, res) => {
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const service = boundedString(body.service ?? '', MAX_SERVICE_CHARS)?.trim() ?? '';
+      const startsAt = new Date(String(body.starts_at ?? ''));
+      if (!service || Number.isNaN(startsAt.getTime())) {
+        res.status(400).json({ error: 'invalid_appointment' });
+        return;
+      }
+      const settings = await appointmentSettings();
+      const minutes = Math.min(
+        Math.max(positiveInteger(body.duration_minutes) ?? settings.slotMinutes, 5),
+        480,
+      );
+      // A hand-booked appointment has no conversation, and therefore never
+      // gets a reminder — see migration 0010. Staff who want reminders book it
+      // from the customer's chat instead.
+      let conversationId: string | null = null;
+      if (body.conversation_id !== undefined && body.conversation_id !== null) {
+        if (!isUuid(body.conversation_id)) {
+          res.status(400).json({ error: 'invalid_conversation_id' });
+          return;
+        }
+        if (!(await repo.getConversation(body.conversation_id))) {
+          res.status(404).json({ error: 'conversation_not_found' });
+          return;
+        }
+        conversationId = body.conversation_id;
+      }
+
+      try {
+        const appointment = await repo.createAppointment({
+          conversationId,
+          customerName: boundedString(body.customer_name ?? '', 200) || null,
+          customerPhone: boundedString(body.customer_phone ?? '', 40) || null,
+          service,
+          startsAt,
+          endsAt: new Date(startsAt.getTime() + minutes * 60_000),
+          notes: boundedString(body.notes ?? '', MAX_APPOINTMENT_NOTES) || null,
+        });
+        await audit(req, 'appointment.created', 'appointment', appointment.id, { by: 'staff' });
+        res.status(201).json(appointment);
+      } catch (err) {
+        if (err instanceof repo.SlotTakenError) {
+          res.status(409).json({ error: 'slot_taken' });
+          return;
+        }
+        throw err;
+      }
+    }),
+  );
+
+  app.patch(
+    '/api/appointments/:id/status',
+    requireAuth,
+    ah(async (req, res) => {
+      if (!isUuid(req.params.id)) {
+        res.status(400).json({ error: 'invalid_id' });
+        return;
+      }
+      const status = String((req.body as Record<string, unknown>)?.status ?? '');
+      if (!STAFF_APPOINTMENT_TRANSITIONS.has(status)) {
+        res.status(400).json({ error: 'invalid_status' });
+        return;
+      }
+      const appointment = await repo.setAppointmentStatusAsStaff(
+        req.params.id,
+        status as repo.AppointmentStatus,
+        // Only an appointment still on the books can be moved. A cancelled one
+        // stays cancelled: reviving it silently would put a customer back in a
+        // slot that may since have been given away.
+        ['booked', 'confirmed'],
+      );
+      if (!appointment) {
+        res.status(404).json({ error: 'appointment_not_found' });
+        return;
+      }
+      // A reminder for an appointment that is over, cancelled or a no-show is
+      // just noise arriving after the fact.
+      if (status !== 'confirmed') {
+        await repo
+          .cancelPendingReminders(appointment.id, `staff_marked_${status}`)
+          .catch((err) => logger.error({ err, id: appointment.id }, 'failed to cancel reminders'));
+      }
+      await audit(req, 'appointment.status_changed', 'appointment', appointment.id, { status });
+      res.json(appointment);
     }),
   );
 

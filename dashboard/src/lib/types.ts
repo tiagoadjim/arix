@@ -135,3 +135,31 @@ export interface KnowledgeEntryInput {
   answer: string;
   tags: string[];
 }
+
+export type AppointmentStatus = 'booked' | 'confirmed' | 'cancelled' | 'completed' | 'no_show';
+
+/** An agenda row. `from_chat` false means staff booked it by hand — that
+ * customer has no conversation, so they will never receive a reminder. */
+export interface AgendaAppointment {
+  id: string;
+  conversation_id: string | null;
+  customer_name: string | null;
+  customer_phone: string | null;
+  service: string;
+  starts_at: string;
+  ends_at: string;
+  status: AppointmentStatus;
+  notes: string | null;
+  reminders_enabled: boolean;
+  from_chat: boolean;
+}
+
+export interface NewAppointmentInput {
+  service: string;
+  starts_at: string;
+  duration_minutes?: number;
+  customer_name?: string;
+  customer_phone?: string;
+  notes?: string;
+  conversation_id?: string;
+}

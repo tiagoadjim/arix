@@ -195,7 +195,8 @@ export const ACTIVE_APPOINTMENT_STATUSES: readonly AppointmentStatus[] = ['booke
 export interface Appointment {
   id: string;
   account_id: string;
-  conversation_id: string;
+  /** Null for an appointment staff booked by hand (phone, walk-in). */
+  conversation_id: string | null;
   customer_name: string | null;
   customer_phone: string | null;
   service: string;
@@ -233,7 +234,8 @@ export async function getBusyAppointments(from: Date, to: Date): Promise<Appoint
 }
 
 export async function createAppointment(input: {
-  conversationId: string;
+  /** Null when staff booked it by hand — see migration 0010. */
+  conversationId: string | null;
   customerName?: string | null;
   customerPhone?: string | null;
   service: string;
@@ -342,6 +344,51 @@ export async function listAppointments(from: Date, to: Date, limit = 500): Promi
       order by starts_at
       limit $4`,
     [ACCOUNT, from, to, limit],
+  );
+}
+
+/** An agenda row with the bits of the conversation the dashboard shows. Null
+ * conversation fields mean staff booked it by hand. */
+export interface AgendaAppointment extends Appointment {
+  wa_jid: string | null;
+  conversation_name: string | null;
+}
+
+/** Everything in a window, any status, for the dashboard agenda. LEFT JOIN so
+ * hand-booked appointments (no conversation) are not silently dropped from the
+ * very view that exists to show the whole day. */
+export async function listAgenda(from: Date, to: Date, limit = 500): Promise<AgendaAppointment[]> {
+  return many<AgendaAppointment>(
+    `select a.*, c.wa_jid, c.customer_name as conversation_name
+       from appointments a
+       left join conversations c on c.id = a.conversation_id
+      where a.account_id = $1 and a.starts_at >= $2 and a.starts_at < $3
+      order by a.starts_at
+      limit $4`,
+    [ACCOUNT, from, to, limit],
+  );
+}
+
+/**
+ * Change an appointment's status from the dashboard.
+ *
+ * Deliberately separate from setAppointmentStatus, which is scoped by
+ * conversation_id so the agent can only ever touch the chat it is in. Staff
+ * are not in a chat — they are looking at the day — so the scope here is the
+ * account. Keeping them as two functions means neither can be reached by
+ * accident from the wrong side.
+ */
+export async function setAppointmentStatusAsStaff(
+  id: string,
+  status: AppointmentStatus,
+  from: readonly AppointmentStatus[],
+): Promise<Appointment | null> {
+  return one<Appointment>(
+    `update appointments
+        set status = $3, updated_at = now()
+      where account_id = $1 and id = $2 and status = any($4)
+      returning *`,
+    [ACCOUNT, id, status, from as unknown as string[]],
   );
 }
 

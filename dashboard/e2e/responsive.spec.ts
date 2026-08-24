@@ -64,7 +64,7 @@ test('the login screen fits the viewport', async ({ page }) => {
 test('no console route scrolls sideways', async ({ page }) => {
   await login(page);
 
-  for (const path of ['/', `/c/${CONVERSATION_ID}`, '/analytics', '/config']) {
+  for (const path of ['/', `/c/${CONVERSATION_ID}`, '/agenda', '/analytics', '/config']) {
     await page.goto(path);
     await expect(page.locator('#main-content')).toBeVisible();
     await expectNoHorizontalOverflow(page);

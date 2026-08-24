@@ -5,6 +5,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import {
   BarChart3Icon,
+  CalendarDaysIcon,
   BellIcon,
   BellOffIcon,
   BotIcon,
@@ -273,6 +274,17 @@ export function InboxList({ canManageSettings }: { canManageSettings: boolean })
       {/* Last element on the page when a phone shows the inbox alone, so it
           owns the home-indicator gap. */}
       <div className="border-t border-border p-2 pb-[max(0.5rem,var(--safe-bottom))]">
+        {/* Outside the admin block on purpose: looking at the day and taking a
+            booking over the phone is daily work, like the inbox, so every
+            member of staff gets it — not just administrators. */}
+        <nav className="mb-1" aria-label={t.agenda.nav}>
+          <Button variant="ghost" size="sm" className="w-full min-w-0 justify-start gap-1.5" asChild>
+            <Link href="/agenda">
+              <CalendarDaysIcon className="size-4 shrink-0" />
+              <span className="truncate">{t.sidebar.agendaNav}</span>
+            </Link>
+          </Button>
+        </nav>
         {canManageSettings && (
           <nav className="mb-1 grid grid-cols-2 gap-1" aria-label={t.sidebar.adminNavLabel}>
             <Button variant="ghost" size="sm" className="min-w-0 justify-start gap-1.5" asChild>

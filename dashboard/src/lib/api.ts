@@ -9,6 +9,9 @@ import type {
   UsageSummaryRow,
   KnowledgeEntry,
   KnowledgeEntryInput,
+  AgendaAppointment,
+  AppointmentStatus,
+  NewAppointmentInput,
 } from './types';
 import type { Dictionary } from './i18n';
 
@@ -399,6 +402,17 @@ export const api = {
     jpost<Message>(`/api/conversations/${id}/messages`, { body, clientId }),
   orders: (id: string, signal?: AbortSignal) => jget<{ orders: StaffOrder[] }>(`/api/conversations/${id}/orders`, signal),
   mediaUrl: (path: string) => `/api/media/${path.split('/').map(encodeURIComponent).join('/')}`,
+
+  // ---- agenda ----
+  agenda: (date: string, days: number, signal?: AbortSignal) =>
+    jget<{ timezone: string; appointments: AgendaAppointment[] }>(
+      `/api/appointments?date=${encodeURIComponent(date)}&days=${days}`,
+      signal,
+    ),
+  createAppointment: (input: NewAppointmentInput) =>
+    jpost<AgendaAppointment>('/api/appointments', input),
+  setAppointmentStatus: (id: string, status: AppointmentStatus) =>
+    request<AgendaAppointment>(`/api/appointments/${id}/status`, { method: 'PATCH', body: { status } }),
 
   // ---- knowledge base ----
   knowledge: (signal?: AbortSignal) =>

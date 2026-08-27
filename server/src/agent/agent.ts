@@ -265,7 +265,9 @@ async function runAgentTurn(
       tools: toolDefinitions.length > 0 ? toolDefinitions : undefined,
       temperature: 0.4,
       // Generous budget: thinking models need headroom so the answer isn't
-      // truncated (handled below).
+      // truncated (handled below). These two are the *intent*; a provider whose
+      // model speaks a different dialect rewrites them in prepareBody (OpenAI's
+      // GPT-5.x reject temperature outright and want max_completion_tokens).
       max_tokens: 4096,
     };
     // Keep the model's thinking OUT of `content` (it goes to separate
@@ -275,6 +277,7 @@ async function runAgentTurn(
     handle.provider.prepareBody(body, {
       reasoningSplit: llmSettings.reasoningSplit,
       thinkingDisabled: llmSettings.thinkingDisabled,
+      reasoningEffort: llmSettings.reasoningEffort,
     });
     // Grounding lock forced a catalog lookup this round: make the model call it —
     // but only if the provider actually honors a forced function choice. Some

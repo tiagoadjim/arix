@@ -138,7 +138,7 @@ test('usage figures are readable without sideways scrolling', async ({ page }) =
   await expect(page.getByRole('heading', { name: 'Analytics and audit' })).toBeVisible();
 
   const table = page.getByRole('table');
-  const cards = page.getByRole('listitem').filter({ hasText: 'gpt-4.1-mini' });
+  const cards = page.getByRole('listitem').filter({ hasText: 'gpt-5.6-luna' });
 
   if (viewportWidth() < 768) {
     // A seven-column table cannot be read on a phone, so the same rows are

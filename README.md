@@ -64,7 +64,7 @@ overridable per deployment.
 
 | Provider | Default model | Tool calling | Vision (receipt reading) |
 |---|---|:---:|:---:|
-| OpenAI | `gpt-5.4-mini` | Yes | Yes |
+| OpenAI | `gpt-5.6-luna` | Yes | Yes |
 | Anthropic Claude | `claude-sonnet-5` | Yes | Yes |
 | Google Gemini | `gemini-3.5-flash` | Yes | Yes |
 | DeepSeek | `deepseek-v4-flash` | Yes | No |
@@ -73,6 +73,18 @@ overridable per deployment.
 DeepSeek has no vision support today: instead of reading the receipt image,
 the agent asks the customer for the order number and amount in text, or hands
 off to a human — your choice, set per deployment.
+
+**OpenAI GPT-5.x and o-series** are reasoning models: they reject the classic
+`temperature` / `max_tokens` request fields, so AriX translates the request for
+them automatically (`server/src/agent/llm/providers.ts`). How long they think
+before replying is yours to set — Settings → AI Provider → *Reasoning effort*,
+or `LLM_REASONING_EFFORT` (`none` … `max`, default `medium`). Higher is slower
+and bills more output tokens on every WhatsApp message.
+
+> **Upgrading:** the OpenAI default model changed from `gpt-5.4-mini` to
+> `gpt-5.6-luna`. A deployment that left the model blank switches over on
+> update; set `LLM_MODEL=gpt-5.4-mini` (or fill in the Model field) to stay on
+> the old one.
 
 ## Quickstart (Docker)
 

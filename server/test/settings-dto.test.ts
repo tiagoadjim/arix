@@ -129,6 +129,7 @@ describe('buildSettingsDto', () => {
     const llmKeys = dto.llm?.map((d: SettingDto) => d.key) ?? [];
     expect(llmKeys).toContain('llm.provider');
     expect(llmKeys).toContain('llm.api_key');
+    expect(llmKeys).toContain('llm.reasoning_effort');
   });
 
   it('NEVER leaks a secret value anywhere in the serialized DTO (the no-plaintext-leak proof)', () => {
@@ -215,6 +216,8 @@ describe('coerceForStorage', () => {
   it('stores a valid enum value as-is, falling back to the default when invalid', () => {
     expect(coerceForStorage(entry('llm.provider'), 'openai')).toBe('openai');
     expect(coerceForStorage(entry('llm.provider'), 'not-a-real-provider')).toBe(String(entry('llm.provider').default));
+    expect(coerceForStorage(entry('llm.reasoning_effort'), 'xhigh')).toBe('xhigh');
+    expect(coerceForStorage(entry('llm.reasoning_effort'), 'turbo')).toBe('medium');
   });
 
   it('stores a plain string as-is', () => {

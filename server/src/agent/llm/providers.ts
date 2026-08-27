@@ -17,9 +17,47 @@ import { stripThinking } from './postprocess';
 
 export type ProviderId = 'openai' | 'anthropic' | 'gemini' | 'deepseek' | 'minimax';
 
+/** Reasoning budget levels accepted by OpenAI's GPT-5.x family, cheapest first. */
+export const REASONING_EFFORTS = ['none', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
+export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
+
+/**
+ * True for models that speak OpenAI's "reasoning" request dialect: they REJECT
+ * (400, not silently ignore) `temperature`, `top_p`, `max_tokens` and the
+ * penalty/logprob knobs, and take the output budget as `max_completion_tokens`.
+ *
+ * Matching is on the model id's last path segment so a vendor-prefixed id from
+ * an OpenAI-compatible gateway ('openai/gpt-5.6-luna' on OpenRouter) is caught
+ * too. The `*-chat*` ids in the GPT-5 family (e.g. gpt-5-chat-latest) are NOT
+ * reasoning models and do accept temperature, hence the carve-out.
+ */
+export function isReasoningModel(model: string): boolean {
+  const id = model.toLowerCase().trim().split('/').pop() ?? '';
+  if (id.includes('-chat')) return false;
+  return /^(gpt-[5-9]|o[1-9])/.test(id);
+}
+
+/**
+ * Extra `max_completion_tokens` to reserve for reasoning tokens on top of the
+ * caller's visible-answer budget. Reasoning tokens are billed as output and
+ * count against the same ceiling, so without headroom a thinking turn burns the
+ * whole budget and comes back with finish_reason 'length' and empty content —
+ * which agent.ts turns into the generic fallback for the customer.
+ * Worst case here (max) stays far under gpt-5.6-luna's 128k output limit.
+ */
+const REASONING_HEADROOM: Record<ReasoningEffort, number> = {
+  none: 0,
+  low: 4_096,
+  medium: 12_288,
+  high: 24_576,
+  xhigh: 32_768,
+  max: 49_152,
+};
+
 export interface PrepareBodyOptions {
   reasoningSplit: boolean;
   thinkingDisabled: boolean;
+  reasoningEffort: ReasoningEffort;
 }
 
 export interface ProviderSpec {
@@ -58,13 +96,29 @@ export const PROVIDERS: Record<ProviderId, ProviderSpec> = {
     id: 'openai',
     label: 'OpenAI',
     baseURL: 'https://api.openai.com/v1',
-    // developers.openai.com/api/docs/models (verified 2026-07-08): current
-    // cost-effective vision+tools model, replacing the now-stale gpt-5.1-mini.
-    defaultModel: 'gpt-5.4-mini',
+    // developers.openai.com/api/docs/models/gpt-5.6-luna (verified 2026-08-27):
+    // supersedes gpt-5.4-mini as the cost-effective vision+tools default —
+    // $0.20/$1.20 per million in/out, a 1.05M context window, and vision,
+    // function calling and structured outputs all supported.
+    defaultModel: 'gpt-5.6-luna',
     docsUrl: 'https://developers.openai.com/api/docs/models',
     supportsVision: () => true,
     supportsForcedToolChoice: true,
-    prepareBody: noopPrepareBody,
+    // GPT-5.x / o-series speak a different request dialect from the classic
+    // chat models. Translating here (rather than in agent.ts) keeps both body
+    // builders — the agent loop and the /api/setup/test/llm probe — correct by
+    // construction, and leaves non-reasoning OpenAI models untouched.
+    prepareBody(body, opts) {
+      if (!isReasoningModel(String(body.model ?? ''))) return;
+      // Sent verbatim these are a hard 400, not a no-op.
+      delete body.temperature;
+      delete body.top_p;
+      if (typeof body.max_tokens === 'number') {
+        body.max_completion_tokens = body.max_tokens + REASONING_HEADROOM[opts.reasoningEffort];
+        delete body.max_tokens;
+      }
+      body.reasoning_effort = opts.reasoningEffort;
+    },
     postprocess: stripThinking,
   },
   anthropic: {

@@ -263,6 +263,14 @@ export interface Dictionary {
       visionFallbackLabel: string;
       visionFallbackAskDetails: string;
       visionFallbackHandoff: string;
+      reasoningEffortLabel: string;
+      reasoningEffortHint: string;
+      reasoningEffortNone: string;
+      reasoningEffortLow: string;
+      reasoningEffortMedium: string;
+      reasoningEffortHigh: string;
+      reasoningEffortXhigh: string;
+      reasoningEffortMax: string;
       advancedTitle: string;
       reasoningSplitLabel: string;
       reasoningSplitHint: string;

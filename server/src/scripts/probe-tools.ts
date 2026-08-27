@@ -1,5 +1,6 @@
 import type OpenAI from 'openai';
 import { getLlm } from '../agent/llm/client';
+import type { PrepareBodyOptions } from '../agent/llm/providers';
 import { buildSystemPrompt } from '../agent/prompt';
 import { getToolDefinitions } from '../agent/tools';
 import { businessProfile, complianceRules, hoursConfig, infoBlocks, woo, llm as resolveLlmSettings } from '../config/runtime';
@@ -31,8 +32,8 @@ const ctx: ToolContext = {
 };
 
 async function ask(
-  chatComplete: Awaited<ReturnType<typeof getLlm>>['chatComplete'],
-  model: string,
+  handle: Awaited<ReturnType<typeof getLlm>>,
+  prepareOpts: PrepareBodyOptions,
   messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
   label: string,
   extra: Record<string, unknown>,
@@ -40,15 +41,19 @@ async function ask(
 ): Promise<void> {
   const body: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming &
     Record<string, unknown> = {
-    model,
+    model: handle.model,
     messages,
     tools: tools.length > 0 ? tools : undefined,
     temperature: 0.4,
     max_tokens: 4096, // match runAgent so inline <think> isn't truncated before the tool call
-    ...extra,
   };
+  // Same request-shaping runAgent applies — without it this probe would send a
+  // dialect the configured model may reject, and report a provider failure that
+  // production never sees.
+  handle.provider.prepareBody(body, prepareOpts);
+  Object.assign(body, extra);
   try {
-    const resp = await chatComplete(body);
+    const resp = await handle.chatComplete(body);
     const msg = resp.choices[0]?.message;
     const toolName = msg?.tool_calls?.[0]?.type === 'function' ? msg.tool_calls[0].function.name : undefined;
     const called = toolName === 'search_catalog';
@@ -93,26 +98,32 @@ async function main(): Promise<void> {
 
   const toolDefinitions = await getToolDefinitions();
 
+  const prepareOpts: PrepareBodyOptions = {
+    reasoningSplit: llmSettings.reasoningSplit,
+    thinkingDisabled: llmSettings.thinkingDisabled,
+    reasoningEffort: llmSettings.reasoningEffort,
+  };
+
   // reasoning_split is a MiniMax-specific quirk (see agent/llm/providers.ts);
   // only meaningful when that's the configured provider.
   if (handle.provider.id === 'minimax') {
     // The fix: no reasoning_split → expect a search_catalog tool_call.
-    await ask(handle.chatComplete, handle.model, messages, 'reasoning_split OFF (fix)', {}, toolDefinitions);
+    await ask(handle, prepareOpts, messages, 'reasoning_split OFF (fix)', {}, toolDefinitions);
     // The regression: reasoning_split on → expect degradation / no tool_call.
-    await ask(handle.chatComplete, handle.model, messages, 'reasoning_split ON (regression)', {
+    await ask(handle, prepareOpts, messages, 'reasoning_split ON (regression)', {
       reasoning_split: true,
     }, toolDefinitions);
   } else {
     console.log(
       `\n[reasoning_split] skipped — MiniMax-specific quirk, not applicable to "${handle.provider.id}"`,
     );
-    await ask(handle.chatComplete, handle.model, messages, 'baseline (no extra params)', {}, toolDefinitions);
+    await ask(handle, prepareOpts, messages, 'baseline (no extra params)', {}, toolDefinitions);
   }
 
   // Does the provider honor a forced function choice? Decides the
   // grounding-lock fallback path in runAgent.
   if (handle.provider.supportsForcedToolChoice) {
-    await ask(handle.chatComplete, handle.model, messages, 'tool_choice forced to search_catalog', {
+    await ask(handle, prepareOpts, messages, 'tool_choice forced to search_catalog', {
       tool_choice: { type: 'function', function: { name: 'search_catalog' } },
     }, toolDefinitions);
   } else {
@@ -125,7 +136,7 @@ async function main(): Promise<void> {
   // about (reasoning_split/thinking, vision_fallback) — surfaced here purely
   // for operator visibility while probing.
   console.log(
-    `\nconfigured reasoningSplit=${llmSettings.reasoningSplit} thinkingDisabled=${llmSettings.thinkingDisabled} visionFallback=${llmSettings.visionFallback}`,
+    `\nconfigured reasoningSplit=${llmSettings.reasoningSplit} thinkingDisabled=${llmSettings.thinkingDisabled} reasoningEffort=${llmSettings.reasoningEffort} visionFallback=${llmSettings.visionFallback}`,
   );
 
   process.exit(0);

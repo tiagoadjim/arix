@@ -27,10 +27,11 @@ function groupedSettings() {
     llm: [
       setting('llm.provider', 'llm', 'openai', 'enum'),
       setting('llm.api_key', 'llm', '', 'string', true),
-      setting('llm.model', 'llm', 'gpt-4.1-mini'),
+      setting('llm.model', 'llm', 'gpt-5.6-luna'),
       setting('llm.base_url', 'llm', ''),
       setting('llm.reasoning_split', 'llm', false, 'boolean'),
       setting('llm.thinking_disabled', 'llm', false, 'boolean'),
+      setting('llm.reasoning_effort', 'llm', 'medium', 'enum'),
       setting('llm.vision_fallback', 'llm', 'ask_details', 'enum'),
     ],
     wc: [
@@ -212,7 +213,7 @@ async function handle(req, res) {
   }
 
   if (pathname === '/api/setup/test/llm' && method === 'POST') {
-    return json(res, 200, { ok: true, model: 'gpt-4.1-mini', vision: true });
+    return json(res, 200, { ok: true, model: 'gpt-5.6-luna', vision: true });
   }
 
   if (pathname === '/api/setup/test/woocommerce' && method === 'POST') {
@@ -427,7 +428,7 @@ async function handle(req, res) {
         {
           day: '2026-07-10',
           provider: 'openai',
-          model: 'gpt-4.1-mini',
+          model: 'gpt-5.6-luna',
           requests: 3,
           prompt_tokens: 100,
           completion_tokens: 50,

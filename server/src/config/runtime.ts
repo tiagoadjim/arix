@@ -17,6 +17,7 @@ import {
 import { normalizeEnabledSkills, defaultEnabledSkills } from '../skills/ids';
 import { normalizeVertical, type Vertical } from '../verticals';
 import { normalizeMcpServers, type McpServerConfig } from '../mcp/types';
+import type { ReasoningEffort } from '../agent/llm/providers';
 
 /**
  * Runtime config service — the backbone the rest of the app reads operable
@@ -195,6 +196,7 @@ export interface LlmSettings {
   baseUrl: string;
   reasoningSplit: boolean;
   thinkingDisabled: boolean;
+  reasoningEffort: ReasoningEffort;
   visionFallback: 'ask_details' | 'handoff';
   inputCostPerMillion: number;
   outputCostPerMillion: number;
@@ -212,6 +214,7 @@ export async function llm(): Promise<LlmSettings> {
     baseUrl: valueOf<string>(meta, 'llm.base_url'),
     reasoningSplit: valueOf<boolean>(meta, 'llm.reasoning_split'),
     thinkingDisabled: valueOf<boolean>(meta, 'llm.thinking_disabled'),
+    reasoningEffort: valueOf<ReasoningEffort>(meta, 'llm.reasoning_effort'),
     visionFallback: valueOf<'ask_details' | 'handoff'>(meta, 'llm.vision_fallback'),
     inputCostPerMillion: valueOf<number>(meta, 'llm.input_cost_per_million'),
     outputCostPerMillion: valueOf<number>(meta, 'llm.output_cost_per_million'),

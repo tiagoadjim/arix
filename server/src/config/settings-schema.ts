@@ -1,4 +1,5 @@
 import { AR_TZ, DEFAULT_DELIVERY_SCHEDULE, type Schedule } from '../agent/hours';
+import { REASONING_EFFORTS } from '../agent/llm/providers';
 import { DEFAULT_VERTICAL, VERTICALS } from '../verticals';
 
 /**
@@ -103,6 +104,18 @@ export const SETTINGS_SCHEMA: readonly SettingDefinition[] = [
     default: false,
     seedEnv: 'LLM_THINKING_DISABLED',
     label: 'Hard-disable model "thinking" (provider-specific)',
+  },
+  {
+    key: 'llm.reasoning_effort',
+    group: 'llm',
+    type: 'enum',
+    // How much the model is allowed to think before answering. Only OpenAI's
+    // GPT-5.x/o-series read this (agent/llm/providers.ts::isReasoningModel);
+    // for every other provider it's inert. 'medium' is OpenAI's own default.
+    enumValues: REASONING_EFFORTS,
+    default: 'medium',
+    seedEnv: 'LLM_REASONING_EFFORT',
+    label: 'Reasoning effort (OpenAI GPT-5.x and o-series only)',
   },
   {
     key: 'llm.vision_fallback',

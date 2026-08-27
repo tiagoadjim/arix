@@ -605,7 +605,13 @@ export function createApiServer(deps: {
         messages: [{ role: 'user', content: 'ping' }],
         max_tokens: 1,
       };
-      provider.prepareBody(body, { reasoningSplit: false, thinkingDisabled: false });
+      // A credential ping has nothing to think about: effort 'none' keeps a
+      // reasoning model from spending (billed) reasoning tokens on it.
+      provider.prepareBody(body, {
+        reasoningSplit: false,
+        thinkingDisabled: false,
+        reasoningEffort: 'none',
+      });
 
       try {
         await client.chat.completions.create(body);

@@ -6,7 +6,15 @@ import { ExternalLinkIcon } from 'lucide-react';
 import { useT } from '@/lib/i18n/provider';
 import { interpolate } from '@/lib/i18n';
 import { api, type SettingDto, type SettingsUpdate } from '@/lib/api';
-import { PROVIDER_LIST, PROVIDERS, isProviderId, type ProviderId } from '@/lib/providers';
+import {
+  PROVIDER_LIST,
+  PROVIDERS,
+  REASONING_EFFORTS,
+  isProviderId,
+  isReasoningEffort,
+  type ProviderId,
+  type ReasoningEffort,
+} from '@/lib/providers';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -34,6 +42,7 @@ export interface ProviderFormValues {
   baseUrl: string;
   reasoningSplit: boolean;
   thinkingDisabled: boolean;
+  reasoningEffort: ReasoningEffort;
   visionFallback: 'ask_details' | 'handoff';
   inputCostPerMillion: number;
   outputCostPerMillion: number;
@@ -42,6 +51,7 @@ export interface ProviderFormValues {
 export function initProviderValues(dtos: SettingDto[] | undefined): ProviderFormValues {
   const providerRaw = stringValue('llm.provider', dtos, 'minimax');
   const visionFallbackRaw = stringValue('llm.vision_fallback', dtos, 'ask_details');
+  const reasoningEffortRaw = stringValue('llm.reasoning_effort', dtos, 'medium');
   return {
     provider: isProviderId(providerRaw) ? providerRaw : 'minimax',
     apiKey: '', // secrets never arrive in plaintext — blank means "unchanged"
@@ -49,6 +59,7 @@ export function initProviderValues(dtos: SettingDto[] | undefined): ProviderForm
     baseUrl: stringValue('llm.base_url', dtos),
     reasoningSplit: booleanValue('llm.reasoning_split', dtos),
     thinkingDisabled: booleanValue('llm.thinking_disabled', dtos),
+    reasoningEffort: isReasoningEffort(reasoningEffortRaw) ? reasoningEffortRaw : 'medium',
     visionFallback: visionFallbackRaw === 'handoff' ? 'handoff' : 'ask_details',
     inputCostPerMillion: numberValue('llm.input_cost_per_million', dtos),
     outputCostPerMillion: numberValue('llm.output_cost_per_million', dtos),
@@ -63,11 +74,25 @@ export function buildProviderUpdates(values: ProviderFormValues, dtos: SettingDt
     plainUpdate('llm.base_url', values.baseUrl, dtos),
     plainUpdate('llm.reasoning_split', values.reasoningSplit, dtos),
     plainUpdate('llm.thinking_disabled', values.thinkingDisabled, dtos),
+    plainUpdate('llm.reasoning_effort', values.reasoningEffort, dtos),
     plainUpdate('llm.vision_fallback', values.visionFallback, dtos),
     plainUpdate('llm.input_cost_per_million', values.inputCostPerMillion, dtos),
     plainUpdate('llm.output_cost_per_million', values.outputCostPerMillion, dtos),
   ]);
 }
+
+type ProviderCopy = ReturnType<typeof useT>['t'];
+
+/** Level names live in i18n, so map each effort to its string rather than
+ * building the key by concatenation (which would defeat the type check). */
+const REASONING_EFFORT_LABELS: Record<ReasoningEffort, (t: ProviderCopy) => string> = {
+  none: (t) => t.settings.provider.reasoningEffortNone,
+  low: (t) => t.settings.provider.reasoningEffortLow,
+  medium: (t) => t.settings.provider.reasoningEffortMedium,
+  high: (t) => t.settings.provider.reasoningEffortHigh,
+  xhigh: (t) => t.settings.provider.reasoningEffortXhigh,
+  max: (t) => t.settings.provider.reasoningEffortMax,
+};
 
 interface ProviderFieldsProps {
   values: ProviderFormValues;
@@ -216,6 +241,32 @@ export function ProviderFields({ values, onChange, dtos, disabled, hide }: Provi
           </Select>
         </div>
       </div>
+
+      {meta.supportsReasoningEffort && !hidden('llm.reasoning_effort') && (
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor="llm-reasoning-effort" className="justify-between">
+          <span>{t.settings.provider.reasoningEffortLabel}</span>
+          {isReadOnly('llm.reasoning_effort', dtos) && <Badge variant="outline">{t.common.envLockedBadge}</Badge>}
+        </Label>
+        <Select
+          value={values.reasoningEffort}
+          onValueChange={(v) => isReasoningEffort(v) && set('reasoningEffort', v)}
+          disabled={disabled || isReadOnly('llm.reasoning_effort', dtos)}
+        >
+          <SelectTrigger id="llm-reasoning-effort" className="w-full sm:w-64">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {REASONING_EFFORTS.map((effort) => (
+              <SelectItem key={effort} value={effort}>
+                {REASONING_EFFORT_LABELS[effort](t)}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <p className="text-xs text-muted-foreground">{t.settings.provider.reasoningEffortHint}</p>
+      </div>
+      )}
 
       <div className="flex flex-col gap-1.5">
         <Label htmlFor="llm-base-url">{t.settings.provider.baseUrlLabel}</Label>

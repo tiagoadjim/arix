@@ -1,4 +1,6 @@
 import { AR_TZ, DEFAULT_DELIVERY_SCHEDULE, type Schedule } from '../agent/hours';
+import { REASONING_EFFORTS } from '../agent/llm/providers';
+import { DEFAULT_VERTICAL, VERTICALS } from '../verticals';
 
 /**
  * Declarative registry of every runtime-configurable setting. This is the
@@ -102,6 +104,18 @@ export const SETTINGS_SCHEMA: readonly SettingDefinition[] = [
     default: false,
     seedEnv: 'LLM_THINKING_DISABLED',
     label: 'Hard-disable model "thinking" (provider-specific)',
+  },
+  {
+    key: 'llm.reasoning_effort',
+    group: 'llm',
+    type: 'enum',
+    // How much the model is allowed to think before answering. Only OpenAI's
+    // GPT-5.x/o-series read this (agent/llm/providers.ts::isReasoningModel);
+    // for every other provider it's inert. 'medium' is OpenAI's own default.
+    enumValues: REASONING_EFFORTS,
+    default: 'medium',
+    seedEnv: 'LLM_REASONING_EFFORT',
+    label: 'Reasoning effort (OpenAI GPT-5.x and o-series only)',
   },
   {
     key: 'llm.vision_fallback',
@@ -219,6 +233,112 @@ export const SETTINGS_SCHEMA: readonly SettingDefinition[] = [
     label: 'Automatically mark matched receipts as paid (unsafe unless independently reconciled)',
   },
 
+  // ---- Appointments (vertical: appointments) ----------------------------------
+  {
+    key: 'appointments.slot_minutes',
+    group: 'appointments',
+    type: 'number',
+    min: 5,
+    max: 480,
+    default: 60,
+    seedEnv: 'APPOINTMENTS_SLOT_MINUTES',
+    label: 'Length of one appointment, in minutes',
+  },
+  {
+    key: 'appointments.horizon_days',
+    group: 'appointments',
+    type: 'number',
+    min: 1,
+    max: 90,
+    default: 14,
+    seedEnv: 'APPOINTMENTS_HORIZON_DAYS',
+    label: 'How many days ahead customers may book',
+  },
+  {
+    key: 'appointments.lead_minutes',
+    group: 'appointments',
+    type: 'number',
+    min: 0,
+    max: 10_080,
+    default: 120,
+    seedEnv: 'APPOINTMENTS_LEAD_MINUTES',
+    label: 'Minimum notice before an appointment can start',
+  },
+  {
+    key: 'appointments.services',
+    group: 'appointments',
+    type: 'json',
+    // Empty = the agent accepts whatever the customer describes. A configured
+    // list is offered to the customer and constrains what can be booked.
+    default: [],
+    seedEnv: 'APPOINTMENTS_SERVICES',
+    label: 'Bookable services (JSON array of names; empty = free text)',
+  },
+
+  // ---- Appointment reminders --------------------------------------------------
+  {
+    key: 'reminders.enabled',
+    group: 'reminders',
+    type: 'boolean',
+    // OFF by default, deliberately. Automatic outbound on an unofficial
+    // WhatsApp client is the clearest ban vector Arix has; turning it on must
+    // be a decision someone made, never something that happened to them.
+    default: false,
+    seedEnv: 'REMINDERS_ENABLED',
+    label: 'Send automatic appointment reminders (outbound — read the README first)',
+  },
+  {
+    key: 'reminders.hours_before',
+    group: 'reminders',
+    type: 'number',
+    min: 1,
+    max: 168,
+    default: 3,
+    seedEnv: 'REMINDERS_HOURS_BEFORE',
+    label: 'Hours before the appointment for the final nudge',
+  },
+  {
+    key: 'reminders.day_before_hour',
+    group: 'reminders',
+    type: 'number',
+    min: 0,
+    max: 23,
+    default: 18,
+    seedEnv: 'REMINDERS_DAY_BEFORE_HOUR',
+    label: 'Local hour to send the day-before reminder',
+  },
+  {
+    key: 'reminders.kinds',
+    group: 'reminders',
+    type: 'json',
+    // The day-before one is what actually moves the no-show rate; the booking
+    // confirmation and the final nudge are opt-in extras.
+    default: ['day_before'],
+    seedEnv: 'REMINDERS_KINDS',
+    label: 'Which reminders to schedule (booked, day_before, hours_before)',
+  },
+  {
+    key: 'reminders.template_booked',
+    group: 'reminders',
+    type: 'string',
+    default: '',
+    label: 'Booking confirmation template ({service} {date} {time} {business})',
+  },
+  {
+    key: 'reminders.template_day_before',
+    group: 'reminders',
+    type: 'string',
+    default: '',
+    label: 'Day-before reminder template ({service} {date} {time} {business})',
+  },
+  {
+    key: 'reminders.template_hours_before',
+    group: 'reminders',
+    type: 'string',
+    default: '',
+    label: 'Final nudge template ({service} {date} {time} {business})',
+  },
+
   // ---- Business profile ---------------------------------------------------------
   {
     key: 'business.name',
@@ -235,6 +355,15 @@ export const SETTINGS_SCHEMA: readonly SettingDefinition[] = [
     default: AR_TZ,
     seedEnv: 'BUSINESS_TIMEZONE',
     label: 'Business IANA timezone',
+  },
+  {
+    key: 'business.vertical',
+    group: 'business',
+    type: 'enum',
+    enumValues: VERTICALS,
+    default: DEFAULT_VERTICAL,
+    seedEnv: 'BUSINESS_VERTICAL',
+    label: 'Business type',
   },
   {
     key: 'business.hours',
@@ -311,9 +440,13 @@ export const SETTINGS_SCHEMA: readonly SettingDefinition[] = [
     key: 'skills.enabled',
     group: 'skills',
     type: 'json',
-    // Default is every built-in skill — see skills/registry.ts. Stored as a
-    // JSON string array of skill ids (e.g. ["catalog","orders","payments","handoff"]).
-    default: ['catalog', 'orders', 'payments', 'handoff'],
+    // `null` means "never chosen — follow business.vertical" (resolved by
+    // runtime.ts's enabledSkills()). A concrete list here would win over the
+    // vertical, which is what it used to do: switching to `services` left the
+    // agent advertising search_catalog and confirm_payment. An explicit `[]`
+    // still means "disable everything" — that is a choice, not an absence.
+    // Stored as a JSON string array of skill ids once an operator saves one.
+    default: null,
     seedEnv: 'SKILLS_ENABLED',
     label: 'Enabled built-in agent skills',
   },

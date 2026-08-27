@@ -70,7 +70,7 @@ despliegue.
 
 | Proveedor | Modelo por defecto | Function calling | Visión (lectura de comprobantes) |
 |---|---|:---:|:---:|
-| OpenAI | `gpt-5.4-mini` | Sí | Sí |
+| OpenAI | `gpt-5.6-luna` | Sí | Sí |
 | Anthropic Claude | `claude-sonnet-5` | Sí | Sí |
 | Google Gemini | `gemini-3.5-flash` | Sí | Sí |
 | DeepSeek | `deepseek-v4-flash` | Sí | No |
@@ -80,6 +80,18 @@ DeepSeek no tiene soporte de visión hoy: en lugar de leer la imagen del
 comprobante, el agente le pide al cliente el número de orden y el monto por
 texto, o deriva a un humano — la elección es tuya, se configura por
 despliegue.
+
+**Los GPT-5.x y o-series de OpenAI** son modelos de razonamiento: rechazan los
+campos clásicos `temperature` / `max_tokens`, así que AriX traduce el request
+por vos (`server/src/agent/llm/providers.ts`). Cuánto piensan antes de
+responder lo elegís vos — Configuración → Proveedor de IA → *Esfuerzo de
+razonamiento*, o `LLM_REASONING_EFFORT` (`none` … `max`, por defecto `medium`).
+Más alto es más lento y factura más tokens de salida en cada mensaje.
+
+> **Si venís actualizando:** el modelo por defecto de OpenAI pasó de
+> `gpt-5.4-mini` a `gpt-5.6-luna`. Un despliegue que dejó el modelo vacío
+> cambia al actualizar; poné `LLM_MODEL=gpt-5.4-mini` (o completá el campo
+> Modelo) para quedarte en el anterior.
 
 ## Puesta en marcha rápida (Docker)
 

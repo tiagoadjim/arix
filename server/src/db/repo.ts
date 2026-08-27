@@ -1,4 +1,5 @@
 import { many, one, pool } from './pool';
+import { normalizeSearchText } from './search-text';
 import { config } from '../config';
 import { logger } from '../logger';
 import type {
@@ -43,6 +44,532 @@ export interface AuditEvent {
   ip_hash: string | null;
   metadata: Record<string, unknown>;
   created_at: string;
+}
+
+// ---- Knowledge base ---------------------------------------------------------
+
+export interface KnowledgeEntry {
+  id: string;
+  account_id: string;
+  question: string;
+  answer: string;
+  tags: string[];
+  source_url: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Hard ceiling on what one search hands the model. The whole result set is
+ * inlined into the next completion, so an unbounded LIMIT would be a way for a
+ * large knowledge base to blow the context window (and the bill) on one turn. */
+export const KNOWLEDGE_SEARCH_LIMIT = 5;
+
+/** Neutralize LIKE metacharacters so a customer question containing '%' or
+ * '_' is matched literally instead of turning into a wildcard that matches
+ * every entry. Paired with `escape '\'` in the query below. */
+function escapeLike(value: string): string {
+  return value.replace(/[\\%_]/g, (ch) => `\\${ch}`);
+}
+
+export async function searchKnowledgeEntries(
+  query: string,
+  limit = KNOWLEDGE_SEARCH_LIMIT,
+): Promise<KnowledgeEntry[]> {
+  const normalized = normalizeSearchText(query);
+  if (!normalized) return [];
+  // Full-text first, ILIKE second: websearch_to_tsquery handles whole words and
+  // ranks them, but it never matches a partial one, and a customer typing
+  // "envi" or a product code fragment still needs an answer. Both arms search
+  // the SAME normalized column, so accent-insensitivity holds either way.
+  return many<KnowledgeEntry>(
+    // `rank` is ordered by but not selected: it is an implementation detail of
+    // the ranking, not a field of the entry, and selecting it would leak into
+    // every DTO built from this row.
+    `select * from knowledge_entries
+      where account_id = $1
+        and (to_tsvector('simple', search_text) @@ websearch_to_tsquery('simple', $2)
+             or search_text like $3 escape '\\')
+      order by ts_rank(to_tsvector('simple', search_text),
+                       websearch_to_tsquery('simple', $2)) desc,
+               updated_at desc
+      limit $4`,
+    [ACCOUNT, normalized, `%${escapeLike(normalized)}%`, limit],
+  );
+}
+
+export async function listKnowledgeEntries(limit = 200, offset = 0): Promise<KnowledgeEntry[]> {
+  return many<KnowledgeEntry>(
+    `select * from knowledge_entries
+      where account_id = $1
+      order by updated_at desc
+      limit $2 offset $3`,
+    [ACCOUNT, limit, offset],
+  );
+}
+
+export async function countKnowledgeEntries(): Promise<number> {
+  const row = await one<{ count: string }>(
+    'select count(*)::text as count from knowledge_entries where account_id = $1',
+    [ACCOUNT],
+  );
+  return Number(row?.count ?? 0);
+}
+
+export async function getKnowledgeEntry(id: string): Promise<KnowledgeEntry | null> {
+  return one<KnowledgeEntry>(
+    'select * from knowledge_entries where account_id = $1 and id = $2',
+    [ACCOUNT, id],
+  );
+}
+
+export async function createKnowledgeEntry(input: {
+  question: string;
+  answer: string;
+  tags?: string[];
+  sourceUrl?: string | null;
+  createdBy?: string | null;
+}): Promise<KnowledgeEntry> {
+  const tags = input.tags ?? [];
+  const row = await one<KnowledgeEntry>(
+    `insert into knowledge_entries
+       (account_id, question, answer, tags, source_url, created_by, search_text)
+     values ($1, $2, $3, $4, $5, $6, $7)
+     returning *`,
+    [
+      ACCOUNT,
+      input.question,
+      input.answer,
+      tags,
+      input.sourceUrl ?? null,
+      input.createdBy ?? null,
+      normalizeSearchText(input.question, input.answer, tags.join(' ')),
+    ],
+  );
+  if (!row) throw new Error('failed to insert knowledge entry');
+  return row;
+}
+
+export async function updateKnowledgeEntry(
+  id: string,
+  input: { question: string; answer: string; tags?: string[] },
+): Promise<KnowledgeEntry | null> {
+  const tags = input.tags ?? [];
+  return one<KnowledgeEntry>(
+    `update knowledge_entries
+        set question = $3,
+            answer = $4,
+            tags = $5,
+            search_text = $6,
+            updated_at = now()
+      where account_id = $1 and id = $2
+      returning *`,
+    [
+      ACCOUNT,
+      id,
+      input.question,
+      input.answer,
+      tags,
+      normalizeSearchText(input.question, input.answer, tags.join(' ')),
+    ],
+  );
+}
+
+export async function deleteKnowledgeEntry(id: string): Promise<boolean> {
+  const row = await one<{ id: string }>(
+    'delete from knowledge_entries where account_id = $1 and id = $2 returning id',
+    [ACCOUNT, id],
+  );
+  return row !== null;
+}
+
+// ---- Appointments -----------------------------------------------------------
+
+export type AppointmentStatus = 'booked' | 'confirmed' | 'cancelled' | 'completed' | 'no_show';
+
+/** Statuses that still occupy a slot. Mirrors the partial unique index in
+ * migration 0008 — if these ever diverge, the database and the availability
+ * query would disagree about what is free. */
+export const ACTIVE_APPOINTMENT_STATUSES: readonly AppointmentStatus[] = ['booked', 'confirmed'];
+
+export interface Appointment {
+  id: string;
+  account_id: string;
+  /** Null for an appointment staff booked by hand (phone, walk-in). */
+  conversation_id: string | null;
+  customer_name: string | null;
+  customer_phone: string | null;
+  service: string;
+  starts_at: string;
+  ends_at: string;
+  status: AppointmentStatus;
+  notes: string | null;
+  reminders_enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Thrown when the slot was taken between quoting it and booking it. Carries no
+ * detail on purpose: the caller re-quotes availability rather than reporting
+ * anything about the other customer's appointment. */
+export class SlotTakenError extends Error {
+  constructor() {
+    super('slot_taken');
+    this.name = 'SlotTakenError';
+  }
+}
+
+/** Active appointments overlapping [from, to) — the busy list availability
+ * subtracts from the schedule. */
+export async function getBusyAppointments(from: Date, to: Date): Promise<Appointment[]> {
+  return many<Appointment>(
+    `select * from appointments
+      where account_id = $1
+        and status = any($2)
+        and starts_at < $4
+        and ends_at > $3
+      order by starts_at`,
+    [ACCOUNT, ACTIVE_APPOINTMENT_STATUSES as unknown as string[], from, to],
+  );
+}
+
+export async function createAppointment(input: {
+  /** Null when staff booked it by hand — see migration 0010. */
+  conversationId: string | null;
+  customerName?: string | null;
+  customerPhone?: string | null;
+  service: string;
+  startsAt: Date;
+  endsAt: Date;
+  notes?: string | null;
+}): Promise<Appointment> {
+  try {
+    const row = await one<Appointment>(
+      `insert into appointments
+         (account_id, conversation_id, customer_name, customer_phone, service, starts_at, ends_at, notes)
+       values ($1, $2, $3, $4, $5, $6, $7, $8)
+       returning *`,
+      [
+        ACCOUNT,
+        input.conversationId,
+        input.customerName ?? null,
+        input.customerPhone ?? null,
+        input.service,
+        input.startsAt,
+        input.endsAt,
+        input.notes ?? null,
+      ],
+    );
+    if (!row) throw new Error('failed to insert appointment');
+    return row;
+  } catch (err) {
+    // 23505 = unique_violation on appointments_active_slot_idx: someone else
+    // took this exact slot first. That is an expected outcome of two customers
+    // racing, not a fault to log as one.
+    if (typeof err === 'object' && err !== null && (err as { code?: string }).code === '23505') {
+      throw new SlotTakenError();
+    }
+    throw err;
+  }
+}
+
+export async function getAppointment(id: string): Promise<Appointment | null> {
+  return one<Appointment>('select * from appointments where account_id = $1 and id = $2', [
+    ACCOUNT,
+    id,
+  ]);
+}
+
+/** Upcoming active appointments for one conversation, soonest first. */
+export async function getUpcomingAppointments(
+  conversationId: string,
+  now: Date = new Date(),
+  limit = 5,
+): Promise<Appointment[]> {
+  return many<Appointment>(
+    `select * from appointments
+      where account_id = $1
+        and conversation_id = $2
+        and status = any($3)
+        and ends_at >= $4
+      order by starts_at
+      limit $5`,
+    [ACCOUNT, conversationId, ACTIVE_APPOINTMENT_STATUSES as unknown as string[], now, limit],
+  );
+}
+
+/**
+ * Move an appointment to a new status, but only from one it may legally leave.
+ *
+ * Scoped by conversation_id as well as id: the agent only ever acts on behalf
+ * of the chat it is in, so a hallucinated or guessed id from another customer's
+ * appointment finds nothing rather than cancelling it.
+ */
+export async function setAppointmentStatus(
+  id: string,
+  conversationId: string,
+  status: AppointmentStatus,
+  from: readonly AppointmentStatus[] = ACTIVE_APPOINTMENT_STATUSES,
+): Promise<Appointment | null> {
+  return one<Appointment>(
+    `update appointments
+        set status = $4, updated_at = now()
+      where account_id = $1
+        and id = $2
+        and conversation_id = $3
+        and status = any($5)
+      returning *`,
+    [ACCOUNT, id, conversationId, status, from as unknown as string[]],
+  );
+}
+
+/** Turn off reminders for every appointment in a conversation — the opt-out
+ * path. Returns how many were affected so the caller can confirm honestly. */
+export async function disableAppointmentReminders(conversationId: string): Promise<number> {
+  const rows = await many<{ id: string }>(
+    `update appointments
+        set reminders_enabled = false, updated_at = now()
+      where account_id = $1 and conversation_id = $2 and reminders_enabled
+      returning id`,
+    [ACCOUNT, conversationId],
+  );
+  return rows.length;
+}
+
+/** Agenda view for the dashboard: everything in a window, any status. */
+export async function listAppointments(from: Date, to: Date, limit = 500): Promise<Appointment[]> {
+  return many<Appointment>(
+    `select * from appointments
+      where account_id = $1 and starts_at >= $2 and starts_at < $3
+      order by starts_at
+      limit $4`,
+    [ACCOUNT, from, to, limit],
+  );
+}
+
+/** An agenda row with the bits of the conversation the dashboard shows. Null
+ * conversation fields mean staff booked it by hand. */
+export interface AgendaAppointment extends Appointment {
+  wa_jid: string | null;
+  conversation_name: string | null;
+}
+
+/** Everything in a window, any status, for the dashboard agenda. LEFT JOIN so
+ * hand-booked appointments (no conversation) are not silently dropped from the
+ * very view that exists to show the whole day. */
+export async function listAgenda(from: Date, to: Date, limit = 500): Promise<AgendaAppointment[]> {
+  return many<AgendaAppointment>(
+    `select a.*, c.wa_jid, c.customer_name as conversation_name
+       from appointments a
+       left join conversations c on c.id = a.conversation_id
+      where a.account_id = $1 and a.starts_at >= $2 and a.starts_at < $3
+      order by a.starts_at
+      limit $4`,
+    [ACCOUNT, from, to, limit],
+  );
+}
+
+/**
+ * Change an appointment's status from the dashboard.
+ *
+ * Deliberately separate from setAppointmentStatus, which is scoped by
+ * conversation_id so the agent can only ever touch the chat it is in. Staff
+ * are not in a chat — they are looking at the day — so the scope here is the
+ * account. Keeping them as two functions means neither can be reached by
+ * accident from the wrong side.
+ */
+export async function setAppointmentStatusAsStaff(
+  id: string,
+  status: AppointmentStatus,
+  from: readonly AppointmentStatus[],
+): Promise<Appointment | null> {
+  return one<Appointment>(
+    `update appointments
+        set status = $3, updated_at = now()
+      where account_id = $1 and id = $2 and status = any($4)
+      returning *`,
+    [ACCOUNT, id, status, from as unknown as string[]],
+  );
+}
+
+// ---- Appointment reminders --------------------------------------------------
+
+export type ReminderStatus = 'pending' | 'sending' | 'sent' | 'cancelled' | 'skipped' | 'failed';
+
+export interface AppointmentReminder {
+  id: string;
+  account_id: string;
+  appointment_id: string;
+  kind: string;
+  send_at: string;
+  status: ReminderStatus;
+  message_id: string | null;
+  lease_until: string | null;
+  attempt_id: string | null;
+  attempts: number;
+  skip_reason: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** A due reminder joined to everything the dispatcher needs to render and
+ * deliver it, so the tick does not issue four queries per row. */
+export interface DueReminder extends AppointmentReminder {
+  conversation_id: string;
+  wa_jid: string;
+  conversation_mode: ConversationMode;
+  service: string;
+  starts_at: string;
+  appointment_status: AppointmentStatus;
+  reminders_enabled: boolean;
+}
+
+/**
+ * Plan reminders for an appointment.
+ *
+ * ON CONFLICT DO NOTHING against the (appointment_id, kind) unique index, so
+ * planning twice — a retry, a double-booked handler — cannot produce two
+ * copies of the same nudge.
+ */
+export async function scheduleReminders(
+  appointmentId: string,
+  entries: ReadonlyArray<{ kind: string; sendAt: Date }>,
+): Promise<number> {
+  if (entries.length === 0) return 0;
+  const rows = await many<{ id: string }>(
+    `insert into appointment_reminders (account_id, appointment_id, kind, send_at)
+     select $1, $2, k.kind, k.send_at
+       from unnest($3::text[], $4::timestamptz[]) as k(kind, send_at)
+     on conflict (appointment_id, kind) do nothing
+     returning id`,
+    [ACCOUNT, appointmentId, entries.map((e) => e.kind), entries.map((e) => e.sendAt)],
+  );
+  return rows.length;
+}
+
+/** Cancel everything still pending for an appointment — called when it is
+ * cancelled or moved. Never touches rows already sent. */
+export async function cancelPendingReminders(
+  appointmentId: string,
+  reason: string,
+): Promise<number> {
+  const rows = await many<{ id: string }>(
+    `update appointment_reminders
+        set status = 'cancelled', skip_reason = $3, updated_at = now()
+      where account_id = $1 and appointment_id = $2 and status in ('pending', 'sending')
+      returning id`,
+    [ACCOUNT, appointmentId, reason.slice(0, 200)],
+  );
+  return rows.length;
+}
+
+/**
+ * Claim due reminders for this dispatcher.
+ *
+ * The same lease + fencing-token shape as claimReceiptReview: the UPDATE is
+ * the claim, so two dispatchers racing on one row produce exactly one winner,
+ * and a process that dies mid-send releases its rows when the lease expires
+ * rather than stranding them forever. SKIP LOCKED keeps a concurrent tick
+ * moving instead of blocking on the same rows.
+ */
+export async function claimDueReminders(
+  now: Date,
+  leaseSeconds: number,
+  limit: number,
+): Promise<DueReminder[]> {
+  return many<DueReminder>(
+    `with due as (
+       select r.id, r.appointment_id from appointment_reminders r
+        where r.account_id = $1
+          and r.send_at <= $2
+          and (
+            r.status = 'pending'
+            or (r.status = 'sending' and (r.lease_until is null or r.lease_until <= $2))
+          )
+        order by r.send_at
+        limit $4
+        for update skip locked
+     )
+     update appointment_reminders r
+        set status = 'sending',
+            lease_until = $2 + ($3 || ' seconds')::interval,
+            attempt_id = gen_random_uuid(),
+            attempts = r.attempts + 1,
+            updated_at = now()
+       from due
+       join appointments a on a.id = due.appointment_id
+       join conversations c on c.id = a.conversation_id
+      where r.id = due.id
+      returning r.*,
+                a.conversation_id,
+                c.wa_jid,
+                c.mode as conversation_mode,
+                a.service,
+                a.starts_at,
+                a.status as appointment_status,
+                a.reminders_enabled`,
+    [ACCOUNT, now, String(Math.max(1, Math.floor(leaseSeconds))), Math.max(1, Math.min(limit, 200))],
+  );
+}
+
+/** Finalize a claimed reminder. The attempt_id is the fencing token: a
+ * dispatcher whose lease already expired and was re-claimed elsewhere cannot
+ * overwrite the newer attempt's outcome. */
+export async function finalizeReminder(
+  id: string,
+  attemptId: string,
+  outcome: { status: ReminderStatus; messageId?: string | null; skipReason?: string | null },
+): Promise<boolean> {
+  const row = await one<{ id: string }>(
+    `update appointment_reminders
+        set status = $4,
+            message_id = coalesce($5, message_id),
+            skip_reason = $6,
+            lease_until = null,
+            updated_at = now()
+      where account_id = $1 and id = $2 and attempt_id = $3
+      returning id`,
+    [
+      ACCOUNT,
+      id,
+      attemptId,
+      outcome.status,
+      outcome.messageId ?? null,
+      outcome.skipReason?.slice(0, 200) ?? null,
+    ],
+  );
+  return row !== null;
+}
+
+/** Push a reminder out to a later time (quiet hours) without consuming it. */
+export async function deferReminder(
+  id: string,
+  attemptId: string,
+  sendAt: Date,
+  reason: string,
+): Promise<boolean> {
+  const row = await one<{ id: string }>(
+    `update appointment_reminders
+        set status = 'pending',
+            send_at = $4,
+            skip_reason = $5,
+            lease_until = null,
+            attempt_id = null,
+            updated_at = now()
+      where account_id = $1 and id = $2 and attempt_id = $3
+      returning id`,
+    [ACCOUNT, id, attemptId, sendAt, reason.slice(0, 200)],
+  );
+  return row !== null;
+}
+
+export async function getRemindersForAppointment(
+  appointmentId: string,
+): Promise<AppointmentReminder[]> {
+  return many<AppointmentReminder>(
+    'select * from appointment_reminders where account_id = $1 and appointment_id = $2 order by send_at',
+    [ACCOUNT, appointmentId],
+  );
 }
 
 // ---- Conversations ----------------------------------------------------------

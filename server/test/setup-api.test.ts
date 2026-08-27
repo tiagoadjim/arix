@@ -371,12 +371,44 @@ describe('POST /api/setup/test/llm', () => {
     expect(res.status).toBe(200);
     expect(res.body.ok).toBe(true);
     expect(res.body.vision).toBe(true);
-    expect(res.body.model).toBe('gpt-5.4-mini');
+    expect(res.body.model).toBe('gpt-5.6-luna');
     expect(upsertSetting).not.toHaveBeenCalled();
     expect(JSON.stringify(res.body)).not.toContain('sk-test-key-value');
     expect(OpenAIMock).toHaveBeenCalledWith(
       expect.objectContaining({ apiKey: 'sk-test-key-value', baseURL: 'https://api.openai.com/v1' }),
     );
+  });
+
+  it('sends the GPT-5.x reasoning dialect when probing an OpenAI reasoning model', async () => {
+    create.mockResolvedValue({ choices: [{ message: { role: 'assistant', content: 'pong' } }] });
+    const app = createApiServer({ gateway: fakeGateway() });
+    const res = await request(app)
+      .post('/api/setup/test/llm')
+      .set('Cookie', await authCookie())
+      .send({ provider: 'openai', apiKey: 'sk-x', model: 'gpt-5.6-luna' });
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+    // temperature/max_tokens on a reasoning model is a 400, so the probe would
+    // report a working key as broken.
+    const body = create.mock.calls.at(-1)?.[0];
+    expect(body.max_tokens).toBeUndefined();
+    expect(body.temperature).toBeUndefined();
+    // A credential ping has nothing to think about.
+    expect(body.reasoning_effort).toBe('none');
+    expect(body.max_completion_tokens).toBe(1);
+  });
+
+  it('leaves a classic OpenAI chat model on the plain max_tokens dialect', async () => {
+    create.mockResolvedValue({ choices: [{ message: { role: 'assistant', content: 'pong' } }] });
+    const app = createApiServer({ gateway: fakeGateway() });
+    await request(app)
+      .post('/api/setup/test/llm')
+      .set('Cookie', await authCookie())
+      .send({ provider: 'openai', apiKey: 'sk-x', model: 'gpt-4o' });
+    const body = create.mock.calls.at(-1)?.[0];
+    expect(body.max_tokens).toBe(1);
+    expect(body.max_completion_tokens).toBeUndefined();
+    expect(body.reasoning_effort).toBeUndefined();
   });
 
   it('uses posted model/baseUrl overrides and reports the correct vision capability per provider', async () => {

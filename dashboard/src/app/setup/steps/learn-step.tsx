@@ -3,7 +3,15 @@
 import { useEffect, useRef, useState } from 'react';
 import { Loader2Icon, SparklesIcon } from 'lucide-react';
 import { toast } from 'sonner';
-import { api, apiErrorMessage, type ProposedField, type SettingDto, type SiteScanJob, type SettingsUpdate } from '@/lib/api';
+import {
+  api,
+  apiErrorMessage,
+  type ProposedField,
+  type ProposedKnowledge,
+  type SettingDto,
+  type SiteScanJob,
+  type SettingsUpdate,
+} from '@/lib/api';
 import { interpolate } from '@/lib/i18n';
 import { useT } from '@/lib/i18n/provider';
 import { Button } from '@/components/ui/button';
@@ -11,6 +19,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Progress } from '@/components/ui/progress';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Badge } from '@/components/ui/badge';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { findDto, isReadOnly, plainUpdate, compactUpdates } from '@/components/settings/settings-form-utils';
 import { ConnectionState } from '@/components/wizard/connection-state';
@@ -45,10 +55,14 @@ export function LearnStep({
   const [error, setError] = useState<string | null>(null);
   const [decisions, setDecisions] = useState<Record<string, ProposalDecision>>({});
   const [saving, setSaving] = useState(false);
+  // Knowledge proposals have no settings key to be identified by, so decisions
+  // are held by index into the (immutable, per-scan) result list.
+  const [knowledgeAccepted, setKnowledgeAccepted] = useState<Record<number, boolean>>({});
   const jobIdRef = useRef<string | null>(null);
 
   const running = job?.state === 'crawling' || job?.state === 'extracting';
   const fields = job?.state === 'done' ? (job.result?.fields ?? []) : [];
+  const knowledge: ProposedKnowledge[] = job?.state === 'done' ? (job.result?.knowledge ?? []) : [];
 
   // Poll while a scan is alive. Progress is polled rather than pushed because
   // the server's event stream carries no payload and is broadcast to every
@@ -77,6 +91,7 @@ export function LearnStep({
     setStarting(true);
     setError(null);
     setDecisions({});
+    setKnowledgeAccepted({});
     try {
       const { id } = await api.startSiteScan(url);
       jobIdRef.current = id;
@@ -123,7 +138,24 @@ export function LearnStep({
         await api.saveSettings(updates);
         onSettingsChanged();
       }
-      onApplied(updates.length);
+
+      // Accepted knowledge entries are created one by one AFTER the settings
+      // write. A failure here must not cost the operator the settings they
+      // just reviewed, so it surfaces as a toast and the step still advances
+      // — the Knowledge tab in Settings is always there to finish the job.
+      const chosen = knowledge.filter((_, index) => knowledgeAccepted[index]);
+      let savedEntries = 0;
+      for (const entry of chosen) {
+        try {
+          await api.createKnowledge({ question: entry.question, answer: entry.answer, tags: [] });
+          savedEntries += 1;
+        } catch (err) {
+          toast.error(apiErrorMessage(err, t, t.common.error));
+          break;
+        }
+      }
+
+      onApplied(updates.length + savedEntries);
       onNext();
     } catch (err) {
       toast.error(apiErrorMessage(err, t, t.common.error));
@@ -140,6 +172,13 @@ export function LearnStep({
         if (isReadOnly(field.key, grouped?.[field.key.split('.')[0] ?? ''])) continue;
         next[field.key] = { ...next[field.key], accepted: true };
       }
+      return next;
+    });
+    setKnowledgeAccepted(() => {
+      const next: Record<number, boolean> = {};
+      knowledge.forEach((entry, index) => {
+        if (entry.warnings.length === 0) next[index] = true;
+      });
       return next;
     });
   }
@@ -246,7 +285,7 @@ export function LearnStep({
             <p className="text-sm text-muted-foreground text-pretty">{t.wizard.learn.resultSubtitle}</p>
           </div>
 
-          {fields.length === 0 ? (
+          {fields.length === 0 && knowledge.length === 0 ? (
             <Alert>
               <AlertDescription>{t.wizard.learn.nothingFound}</AlertDescription>
             </Alert>
@@ -272,6 +311,68 @@ export function LearnStep({
                   />
                 ))}
               </ul>
+
+              {knowledge.length > 0 && (
+                <div className="flex flex-col gap-3">
+                  <div className="flex flex-col gap-1">
+                    <h3 className="text-sm font-semibold">{t.wizard.learn.knowledgeTitle}</h3>
+                    <p className="text-sm text-muted-foreground text-pretty">
+                      {t.wizard.learn.knowledgeSubtitle}
+                    </p>
+                  </div>
+                  <ul className="flex flex-col gap-2">
+                    {knowledge.map((entry, index) => {
+                      const id = `kb-proposal-${index}`;
+                      return (
+                        <li key={id} className="rounded-lg border border-border p-3">
+                          <div className="flex items-start gap-3">
+                            <Checkbox
+                              id={id}
+                              checked={knowledgeAccepted[index] ?? false}
+                              onCheckedChange={(checked) =>
+                                setKnowledgeAccepted((current) => ({
+                                  ...current,
+                                  [index]: checked === true,
+                                }))
+                              }
+                              className="mt-0.5"
+                            />
+                            <div className="flex min-w-0 flex-col gap-1">
+                              <label htmlFor={id} className="text-sm font-medium break-words">
+                                {entry.question}
+                              </label>
+                              <p className="text-sm text-muted-foreground break-words whitespace-pre-wrap">
+                                {entry.answer}
+                              </p>
+                              {entry.warnings.length > 0 && (
+                                <div className="flex flex-col gap-1 pt-1">
+                                  {entry.warnings.map((warning) => (
+                                    <Badge key={warning} variant="destructive" className="w-fit">
+                                      {warning === 'looks_like_instructions'
+                                        ? t.wizard.learn.warningInstructions
+                                        : t.wizard.learn.warningUngrounded}
+                                    </Badge>
+                                  ))}
+                                </div>
+                              )}
+                              {entry.sourceUrl && (
+                                <a
+                                  href={entry.sourceUrl}
+                                  target="_blank"
+                                  rel="noreferrer noopener"
+                                  className="w-fit text-xs text-muted-foreground underline underline-offset-2 break-all"
+                                >
+                                  {entry.sourceUrl}
+                                </a>
+                              )}
+                            </div>
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              )}
             </>
           )}
 

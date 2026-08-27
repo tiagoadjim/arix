@@ -79,6 +79,7 @@ vi.mock('../src/agent/tools', () => ({
 
 import { runAgent, toolArgumentKeys } from '../src/agent/agent';
 import { LlmRequestError } from '../src/agent/llm/client';
+import { invalidate as invalidateSettings } from '../src/config/runtime';
 import type { Message, ToolContext } from '../src/types';
 
 const ctx: ToolContext = {
@@ -421,5 +422,85 @@ describe('runAgent input/output guards', () => {
 
     expect(reply).toMatch(/problemita/); // esGuardrails.fallback
     expect(create).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('grounding lock is scoped to verticals that have a catalog', () => {
+  // The lock forces a search_catalog lookup before the agent may state a price
+  // or stock level. Its trigger regexes are retail-shaped ("cuánto", "sale",
+  // "tenemos"), so in a business with no catalog they fire on perfectly normal
+  // sentences and the customer gets "dejame chequear el stock" instead of an
+  // answer. runtime.ts reads process.env directly on each resolution, so
+  // stubbing BUSINESS_VERTICAL + invalidate() is enough to switch verticals.
+  const serviceHistory = [
+    {
+      id: 'm1',
+      direction: 'in',
+      sender: 'customer',
+      body: '¿cuánto sale un corte de pelo?',
+      msg_type: 'text',
+    },
+  ] as unknown as Message[];
+
+  const REPLY = 'Un corte sale $8000. Tenemos lugar el jueves 🙂';
+
+  afterEach(() => {
+    delete process.env.BUSINESS_VERTICAL;
+    invalidateSettings();
+  });
+
+  it('still hedges in an ecommerce store that cannot check the catalog', async () => {
+    process.env.BUSINESS_VERTICAL = 'ecommerce';
+    invalidateSettings();
+    enabledToolDefinitions.value = enabledToolDefinitions.value.filter(
+      (tool) => tool.function.name !== 'search_catalog' && tool.function.name !== 'view_product',
+    );
+    create.mockResolvedValueOnce({
+      choices: [
+        { finish_reason: 'stop', message: { role: 'assistant', content: REPLY, tool_calls: [] } },
+      ],
+    });
+
+    await expect(runAgent(ctx, serviceHistory)).resolves.toMatch(/chequear/);
+  });
+
+  it('answers normally in a service business — the same words are not a product claim', async () => {
+    process.env.BUSINESS_VERTICAL = 'services';
+    invalidateSettings();
+    enabledToolDefinitions.value = ['search_knowledge', 'handoff_to_human'].map((name) => ({
+      type: 'function' as const,
+      function: { name, description: name, parameters: { type: 'object', properties: {} } },
+    }));
+    create.mockResolvedValueOnce({
+      choices: [
+        { finish_reason: 'stop', message: { role: 'assistant', content: REPLY, tool_calls: [] } },
+      ],
+    });
+
+    const reply = await runAgent(ctx, serviceHistory);
+
+    expect(reply).toBe(REPLY);
+    expect(reply).not.toMatch(/chequear/);
+  });
+
+  it('builds the services prompt, not the store one', async () => {
+    process.env.BUSINESS_VERTICAL = 'services';
+    invalidateSettings();
+    enabledToolDefinitions.value = ['search_knowledge', 'handoff_to_human'].map((name) => ({
+      type: 'function' as const,
+      function: { name, description: name, parameters: { type: 'object', properties: {} } },
+    }));
+    create.mockResolvedValueOnce({
+      choices: [
+        { finish_reason: 'stop', message: { role: 'assistant', content: 'Hola!', tool_calls: [] } },
+      ],
+    });
+
+    await runAgent(ctx, serviceHistory);
+
+    const system = create.mock.calls[0][0].messages[0].content as string;
+    expect(system).toContain('# Solo temas del negocio');
+    expect(system).not.toContain('# Cómo se compra');
+    expect(system).toContain('search_knowledge');
   });
 });

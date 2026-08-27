@@ -17,7 +17,13 @@
 import { randomUUID } from 'node:crypto';
 import { logger } from '../logger';
 import { crawlStore, DEFAULT_MAX_PAGES, type CrawlResult, type SiteFacts } from './crawler';
-import { ExtractionFailedError, extractStoreProfile, sanitizeText, type ProposedField } from './extract';
+import {
+  ExtractionFailedError,
+  extractStoreProfile,
+  sanitizeText,
+  type ProposedField,
+  type ProposedKnowledge,
+} from './extract';
 
 export type ScanState = 'crawling' | 'extracting' | 'done' | 'error' | 'cancelled';
 
@@ -30,6 +36,7 @@ export interface ScanProgress {
 
 export interface ScanResult {
   fields: ProposedField[];
+  knowledge: ProposedKnowledge[];
   agentTone: string | null;
   pagesRead: string[];
 }
@@ -175,6 +182,7 @@ async function run(job: ScanJob, maxPages: number): Promise<void> {
 
     job.result = {
       fields: withStructuredFacts(extraction.fields, crawl),
+      knowledge: extraction.knowledge,
       agentTone: extraction.agentTone,
       pagesRead: crawl.pages.map((page) => page.url),
     };

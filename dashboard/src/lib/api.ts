@@ -7,6 +7,11 @@ import type {
   StaffOrder,
   StaffRole,
   UsageSummaryRow,
+  KnowledgeEntry,
+  KnowledgeEntryInput,
+  AgendaAppointment,
+  AppointmentStatus,
+  NewAppointmentInput,
 } from './types';
 import type { Dictionary } from './i18n';
 
@@ -235,12 +240,26 @@ export interface ProposedField {
   warnings: ProposalWarning[];
 }
 
+/** A knowledge-base entry proposed by a site scan. Mirrors the server's
+ * ProposedKnowledge: a suggestion only, never written until accepted. */
+export interface ProposedKnowledge {
+  question: string;
+  answer: string;
+  sourceUrl: string | null;
+  warnings: ProposalWarning[];
+}
+
 export interface SiteScanJob {
   id: string;
   state: ScanState;
   root: string;
   progress: { pagesFound: number; pagesFetched: number; maxPages: number; currentUrl: string | null };
-  result: { fields: ProposedField[]; agentTone: string | null; pagesRead: string[] } | null;
+  result: {
+    fields: ProposedField[];
+    knowledge: ProposedKnowledge[];
+    agentTone: string | null;
+    pagesRead: string[];
+  } | null;
   error: string | null;
 }
 
@@ -383,6 +402,25 @@ export const api = {
     jpost<Message>(`/api/conversations/${id}/messages`, { body, clientId }),
   orders: (id: string, signal?: AbortSignal) => jget<{ orders: StaffOrder[] }>(`/api/conversations/${id}/orders`, signal),
   mediaUrl: (path: string) => `/api/media/${path.split('/').map(encodeURIComponent).join('/')}`,
+
+  // ---- agenda ----
+  agenda: (date: string, days: number, signal?: AbortSignal) =>
+    jget<{ timezone: string; appointments: AgendaAppointment[] }>(
+      `/api/appointments?date=${encodeURIComponent(date)}&days=${days}`,
+      signal,
+    ),
+  createAppointment: (input: NewAppointmentInput) =>
+    jpost<AgendaAppointment>('/api/appointments', input),
+  setAppointmentStatus: (id: string, status: AppointmentStatus) =>
+    request<AgendaAppointment>(`/api/appointments/${id}/status`, { method: 'PATCH', body: { status } }),
+
+  // ---- knowledge base ----
+  knowledge: (signal?: AbortSignal) =>
+    jget<{ entries: KnowledgeEntry[]; total: number }>('/api/knowledge', signal),
+  createKnowledge: (input: KnowledgeEntryInput) => jpost<KnowledgeEntry>('/api/knowledge', input),
+  updateKnowledge: (id: string, input: KnowledgeEntryInput) =>
+    jput<KnowledgeEntry>(`/api/knowledge/${id}`, input),
+  deleteKnowledge: (id: string) => jdelete<void>(`/api/knowledge/${id}`),
 
   // ---- setup wizard ----
   setupStatus: () => jget<SetupStatus>('/api/setup/status', undefined, false),

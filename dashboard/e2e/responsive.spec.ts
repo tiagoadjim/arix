@@ -64,7 +64,7 @@ test('the login screen fits the viewport', async ({ page }) => {
 test('no console route scrolls sideways', async ({ page }) => {
   await login(page);
 
-  for (const path of ['/', `/c/${CONVERSATION_ID}`, '/analytics', '/config']) {
+  for (const path of ['/', `/c/${CONVERSATION_ID}`, '/agenda', '/analytics', '/config']) {
     await page.goto(path);
     await expect(page.locator('#main-content')).toBeVisible();
     await expectNoHorizontalOverflow(page);
@@ -138,7 +138,7 @@ test('usage figures are readable without sideways scrolling', async ({ page }) =
   await expect(page.getByRole('heading', { name: 'Analytics and audit' })).toBeVisible();
 
   const table = page.getByRole('table');
-  const cards = page.getByRole('listitem').filter({ hasText: 'gpt-4.1-mini' });
+  const cards = page.getByRole('listitem').filter({ hasText: 'gpt-5.6-luna' });
 
   if (viewportWidth() < 768) {
     // A seven-column table cannot be read on a phone, so the same rows are

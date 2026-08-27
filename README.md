@@ -64,7 +64,7 @@ overridable per deployment.
 
 | Provider | Default model | Tool calling | Vision (receipt reading) |
 |---|---|:---:|:---:|
-| OpenAI | `gpt-5.4-mini` | Yes | Yes |
+| OpenAI | `gpt-5.6-luna` | Yes | Yes |
 | Anthropic Claude | `claude-sonnet-5` | Yes | Yes |
 | Google Gemini | `gemini-3.5-flash` | Yes | Yes |
 | DeepSeek | `deepseek-v4-flash` | Yes | No |
@@ -73,6 +73,18 @@ overridable per deployment.
 DeepSeek has no vision support today: instead of reading the receipt image,
 the agent asks the customer for the order number and amount in text, or hands
 off to a human — your choice, set per deployment.
+
+**OpenAI GPT-5.x and o-series** are reasoning models: they reject the classic
+`temperature` / `max_tokens` request fields, so AriX translates the request for
+them automatically (`server/src/agent/llm/providers.ts`). How long they think
+before replying is yours to set — Settings → AI Provider → *Reasoning effort*,
+or `LLM_REASONING_EFFORT` (`none` … `max`, default `medium`). Higher is slower
+and bills more output tokens on every WhatsApp message.
+
+> **Upgrading:** the OpenAI default model changed from `gpt-5.4-mini` to
+> `gpt-5.6-luna`. A deployment that left the model blank switches over on
+> update; set `LLM_MODEL=gpt-5.4-mini` (or fill in the Model field) to stay on
+> the old one.
 
 ## Quickstart (Docker)
 
@@ -273,6 +285,26 @@ an **unofficial** WhatsApp Web client — not something Meta provides or
 endorses. Using it carries a real risk of the connected number being banned.
 Don't use Arix for bulk/marketing messaging or anything that looks like spam;
 it's built for answering inbound customer conversations, not outbound blasts.
+
+**Appointment reminders are the one automatic outbound feature**, and they are
+**off by default**. Turning them on means this deployment starts sending
+messages nobody clicked send on, which is the clearest ban vector Arix has.
+They are built to stay on the transactional side of that line, and the limits
+are enforced in code rather than left to your judgement:
+
+- only to a conversation that already exists — an appointment is always booked
+  through the chat it will be sent to, so Arix never messages a number that
+  didn't write first;
+- never outside your configured opening hours (a reminder due at 3am is
+  deferred to the next opening, or dropped if that would be too late);
+- at most one message per reminder, guaranteed by the durable outbox even
+  across a crash or a restart;
+- spread out rather than sent in a burst;
+- stopped for that customer the moment they ask, with no argument;
+- and stopped everywhere the moment you switch `reminders.enabled` off.
+
+Even so: it is outbound automation on an unofficial client. Turn it on
+deliberately, on a number you can afford to lose.
 
 ## Roadmap
 

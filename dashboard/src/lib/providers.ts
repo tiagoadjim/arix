@@ -3,7 +3,11 @@
 // is a small, hand-kept copy of just the fields the setup wizard / settings
 // "AI Provider" tab need to render a picker (label, default model, docs link,
 // static vision hint). Keep in sync by hand when server/src/agent/llm/providers.ts
-// changes; values verified against that file on 2026-07-08.
+// changes; values verified against that file on 2026-08-27.
+
+/** Mirror of REASONING_EFFORTS in server/src/agent/llm/providers.ts. */
+export const REASONING_EFFORTS = ['none', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
+export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
 
 export type ProviderId = 'openai' | 'anthropic' | 'gemini' | 'deepseek' | 'minimax';
 
@@ -17,16 +21,21 @@ export interface ProviderMeta {
   supportsVision: boolean;
   /** MiniMax-only request-shaping quirks (reasoning_split / thinking_disabled). */
   hasReasoningQuirks: boolean;
+  /** Whether `llm.reasoning_effort` reaches the wire for this provider. Only
+   * OpenAI's GPT-5.x / o-series read it (see the server registry's
+   * isReasoningModel); elsewhere the setting would be a dead control. */
+  supportsReasoningEffort: boolean;
 }
 
 export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
   openai: {
     id: 'openai',
     label: 'OpenAI',
-    defaultModel: 'gpt-5.4-mini',
+    defaultModel: 'gpt-5.6-luna',
     docsUrl: 'https://developers.openai.com/api/docs/models',
     supportsVision: true,
     hasReasoningQuirks: false,
+    supportsReasoningEffort: true,
   },
   anthropic: {
     id: 'anthropic',
@@ -35,6 +44,7 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     docsUrl: 'https://platform.claude.com/docs/en/api/openai-sdk',
     supportsVision: true,
     hasReasoningQuirks: false,
+    supportsReasoningEffort: false,
   },
   gemini: {
     id: 'gemini',
@@ -43,6 +53,7 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     docsUrl: 'https://ai.google.dev/gemini-api/docs/openai',
     supportsVision: true,
     hasReasoningQuirks: false,
+    supportsReasoningEffort: false,
   },
   deepseek: {
     id: 'deepseek',
@@ -51,6 +62,7 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     docsUrl: 'https://api-docs.deepseek.com',
     supportsVision: false,
     hasReasoningQuirks: false,
+    supportsReasoningEffort: false,
   },
   minimax: {
     id: 'minimax',
@@ -59,6 +71,7 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     docsUrl: 'https://www.minimax.io',
     supportsVision: true,
     hasReasoningQuirks: true,
+    supportsReasoningEffort: false,
   },
 };
 
@@ -66,4 +79,8 @@ export const PROVIDER_LIST: ProviderMeta[] = Object.values(PROVIDERS);
 
 export function isProviderId(value: string): value is ProviderId {
   return value in PROVIDERS;
+}
+
+export function isReasoningEffort(value: string): value is ReasoningEffort {
+  return (REASONING_EFFORTS as readonly string[]).includes(value);
 }

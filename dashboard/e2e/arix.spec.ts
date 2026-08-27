@@ -158,7 +158,7 @@ test('an admin can inspect analytics, audit and runtime metrics', async ({ page 
   await page.getByRole('link', { name: 'Analytics' }).click();
 
   await expect(page.getByRole('heading', { name: 'Analytics and audit' })).toBeVisible();
-  await expect(page.getByRole('row', { name: /openai gpt-4\.1-mini/ })).toBeVisible();
+  await expect(page.getByRole('row', { name: /openai gpt-5\.6-luna/ })).toBeVisible();
 
   await page.getByRole('tab', { name: 'Recent audit activity' }).click();
   await expect(page.getByText('settings.updated')).toBeVisible();

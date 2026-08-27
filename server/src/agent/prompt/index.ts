@@ -1,6 +1,7 @@
 import { config } from '../../config';
 import type { ToolContext } from '../../types';
 import { deliveryStatusLine, getStoreStatus, nowInTimezone, type Language, type Schedule } from '../hours';
+import { DEFAULT_VERTICAL, type Vertical } from '../../verticals';
 import { buildEsPrompt } from './es';
 import { buildEnPrompt } from './en';
 
@@ -50,6 +51,8 @@ export interface PromptParams {
   /** Exact tool names advertised for this turn. Prompt instructions must
    * never tell the model to call a disabled/nonexistent tool. */
   enabledTools: ReadonlySet<string>;
+  /** Selects the domain half of the prompt — see ./verticals. */
+  vertical: Vertical;
 }
 
 /**
@@ -70,6 +73,9 @@ export interface ResolvedPromptConfig {
   infoBlocks: { payment: string; shipping: string; general: string };
   complianceRules: string;
   enabledToolNames?: string[];
+  /** Omitted by pure prompt tests/callers that predate verticals; the live
+   * agent always passes the resolved business.vertical. */
+  vertical?: Vertical;
 }
 
 const TEMPLATES: Record<Language, (p: PromptParams) => string> = {
@@ -120,6 +126,7 @@ export function buildSystemPrompt(
         'handoff_to_human',
       ],
     ),
+    vertical: resolved.vertical ?? DEFAULT_VERTICAL,
   };
 
   return TEMPLATES[resolved.language](params);

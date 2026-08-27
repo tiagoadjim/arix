@@ -14,8 +14,10 @@ import {
   isValidTimezone,
   type Schedule,
 } from '../agent/hours';
-import { normalizeEnabledSkills, DEFAULT_ENABLED_SKILLS } from '../skills/ids';
+import { normalizeEnabledSkills, defaultEnabledSkills } from '../skills/ids';
+import { normalizeVertical, type Vertical } from '../verticals';
 import { normalizeMcpServers, type McpServerConfig } from '../mcp/types';
+import type { ReasoningEffort } from '../agent/llm/providers';
 
 /**
  * Runtime config service — the backbone the rest of the app reads operable
@@ -194,6 +196,7 @@ export interface LlmSettings {
   baseUrl: string;
   reasoningSplit: boolean;
   thinkingDisabled: boolean;
+  reasoningEffort: ReasoningEffort;
   visionFallback: 'ask_details' | 'handoff';
   inputCostPerMillion: number;
   outputCostPerMillion: number;
@@ -211,6 +214,7 @@ export async function llm(): Promise<LlmSettings> {
     baseUrl: valueOf<string>(meta, 'llm.base_url'),
     reasoningSplit: valueOf<boolean>(meta, 'llm.reasoning_split'),
     thinkingDisabled: valueOf<boolean>(meta, 'llm.thinking_disabled'),
+    reasoningEffort: valueOf<ReasoningEffort>(meta, 'llm.reasoning_effort'),
     visionFallback: valueOf<'ask_details' | 'handoff'>(meta, 'llm.vision_fallback'),
     inputCostPerMillion: valueOf<number>(meta, 'llm.input_cost_per_million'),
     outputCostPerMillion: valueOf<number>(meta, 'llm.output_cost_per_million'),
@@ -261,6 +265,7 @@ export interface BusinessProfile {
   language: 'es' | 'en';
   discloseBot: boolean;
   timezone: string;
+  vertical: Vertical;
 }
 
 export async function businessProfile(): Promise<BusinessProfile> {
@@ -272,6 +277,74 @@ export async function businessProfile(): Promise<BusinessProfile> {
     language: valueOf<'es' | 'en'>(meta, 'agent.language'),
     discloseBot: valueOf<boolean>(meta, 'agent.disclose_bot'),
     timezone: isValidTimezone(timezone) ? timezone : AR_TZ,
+    vertical: normalizeVertical(valueOf<string>(meta, 'business.vertical')),
+  };
+}
+
+/** The kind of business this deployment serves. Selects the prompt pack, the
+ * default skill set and whether the catalog grounding lock applies. */
+export async function vertical(): Promise<Vertical> {
+  const meta = await resolve();
+  return normalizeVertical(valueOf<string>(meta, 'business.vertical'));
+}
+
+export interface AppointmentSettings {
+  slotMinutes: number;
+  horizonDays: number;
+  leadMinutes: number;
+  /** Empty means the agent accepts a free-text service description. */
+  services: string[];
+}
+
+export async function appointmentSettings(): Promise<AppointmentSettings> {
+  const meta = await resolve();
+  const rawServices = valueOf<unknown>(meta, 'appointments.services');
+  const services = Array.isArray(rawServices)
+    ? rawServices.filter((s): s is string => typeof s === 'string' && s.trim() !== '')
+    : typeof rawServices === 'string'
+      ? rawServices.split(',').map((s) => s.trim()).filter(Boolean)
+      : [];
+  return {
+    slotMinutes: valueOf<number>(meta, 'appointments.slot_minutes'),
+    horizonDays: valueOf<number>(meta, 'appointments.horizon_days'),
+    leadMinutes: valueOf<number>(meta, 'appointments.lead_minutes'),
+    services,
+  };
+}
+
+export type ReminderKind = 'booked' | 'day_before' | 'hours_before';
+
+export const REMINDER_KINDS: readonly ReminderKind[] = ['booked', 'day_before', 'hours_before'];
+
+export interface ReminderSettings {
+  enabled: boolean;
+  hoursBefore: number;
+  dayBeforeHour: number;
+  kinds: ReminderKind[];
+  templates: Record<ReminderKind, string>;
+}
+
+export async function reminderSettings(): Promise<ReminderSettings> {
+  const meta = await resolve();
+  const rawKinds = valueOf<unknown>(meta, 'reminders.kinds');
+  const list = Array.isArray(rawKinds)
+    ? rawKinds
+    : typeof rawKinds === 'string'
+      ? rawKinds.split(',').map((k) => k.trim())
+      : [];
+  const kinds = list.filter((k): k is ReminderKind =>
+    (REMINDER_KINDS as readonly string[]).includes(k as string),
+  );
+  return {
+    enabled: valueOf<boolean>(meta, 'reminders.enabled'),
+    hoursBefore: valueOf<number>(meta, 'reminders.hours_before'),
+    dayBeforeHour: valueOf<number>(meta, 'reminders.day_before_hour'),
+    kinds: [...new Set(kinds)],
+    templates: {
+      booked: valueOf<string>(meta, 'reminders.template_booked'),
+      day_before: valueOf<string>(meta, 'reminders.template_day_before'),
+      hours_before: valueOf<string>(meta, 'reminders.template_hours_before'),
+    },
   };
 }
 
@@ -324,14 +397,17 @@ export async function setupStep(): Promise<number> {
 export async function enabledSkills(): Promise<string[]> {
   const meta = await resolve();
   const raw = valueOf<unknown>(meta, 'skills.enabled');
+  const fallback = defaultEnabledSkills(
+    normalizeVertical(valueOf<string>(meta, 'business.vertical')),
+  );
   // Env seed arrives as a comma-separated string when set via SKILLS_ENABLED
   // (parseRawValue for json tries JSON.parse first; a bare CSV falls through
   // to the default). Accept both a JSON array and a CSV string here.
   if (typeof raw === 'string') {
     const parts = raw.split(',').map((s) => s.trim()).filter(Boolean);
-    return normalizeEnabledSkills(parts.length > 0 ? parts : DEFAULT_ENABLED_SKILLS);
+    return normalizeEnabledSkills(parts.length > 0 ? parts : fallback, fallback);
   }
-  return normalizeEnabledSkills(raw);
+  return normalizeEnabledSkills(raw, fallback);
 }
 
 /** Configured MCP servers (enabled and disabled). */

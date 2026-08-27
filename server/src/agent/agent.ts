@@ -14,6 +14,7 @@ import {
 import { config } from '../config';
 import { logger } from '../logger';
 import type { Message, ToolContext } from '../types';
+import { hasCatalog } from '../verticals';
 
 type ChatMessage = OpenAI.Chat.Completions.ChatCompletionMessageParam;
 
@@ -217,6 +218,11 @@ async function runAgentTurn(
   const toolDefinitions = await getToolDefinitions();
   const enabledToolNames = toolDefinitions.map((tool) => tool.function.name);
   const catalogToolAvailable = enabledToolNames.includes('search_catalog');
+  // The grounding lock exists to stop the agent inventing prices and stock. Its
+  // retail regexes (ASKS_CATALOG / CLAIMS_PRODUCT) only make sense where there
+  // IS a catalog: in a salon "¿cuánto sale un corte?" would trip them and the
+  // customer would get "dejame chequear el stock" instead of an answer.
+  const groundingLockApplies = hasCatalog(profile.vertical);
 
   const messages: ChatMessage[] = [
     {
@@ -226,6 +232,7 @@ async function runAgentTurn(
         agentName: profile.agentName,
         language: profile.language,
         discloseBot: profile.discloseBot,
+        vertical: profile.vertical,
         timezone: profile.timezone,
         hoursSchedule: schedule,
         // WC_FRONT_URL is optional — fall back to the REST domain when unset.
@@ -258,7 +265,9 @@ async function runAgentTurn(
       tools: toolDefinitions.length > 0 ? toolDefinitions : undefined,
       temperature: 0.4,
       // Generous budget: thinking models need headroom so the answer isn't
-      // truncated (handled below).
+      // truncated (handled below). These two are the *intent*; a provider whose
+      // model speaks a different dialect rewrites them in prepareBody (OpenAI's
+      // GPT-5.x reject temperature outright and want max_completion_tokens).
       max_tokens: 4096,
     };
     // Keep the model's thinking OUT of `content` (it goes to separate
@@ -268,6 +277,7 @@ async function runAgentTurn(
     handle.provider.prepareBody(body, {
       reasoningSplit: llmSettings.reasoningSplit,
       thinkingDisabled: llmSettings.thinkingDisabled,
+      reasoningEffort: llmSettings.reasoningEffort,
     });
     // Grounding lock forced a catalog lookup this round: make the model call it —
     // but only if the provider actually honors a forced function choice. Some
@@ -336,6 +346,7 @@ async function runAgentTurn(
       // product/price/stock fact) but we never queried the catalog this turn — the
       // fact would be invented. Force a lookup once; if the model still won't, hedge.
       const ungrounded =
+        groundingLockApplies &&
         !catalogQueried &&
         (guardrails.asksAboutCatalog(lastCustomerText) || guardrails.makesProductClaim(text));
       if (ungrounded) {
